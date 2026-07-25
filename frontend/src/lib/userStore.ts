@@ -11,36 +11,58 @@ export interface StoredUser {
   role: "student" | "university";
   passwordHash: string;
   walletAddress: string;
-  encryptedPrivateKey: string; // AES-256-GCM encrypted
+  encryptedPrivateKey: string;
   iv: string;
   authTag: string;
   createdAt: string;
 }
 
-const DB_PATH = path.join(process.cwd(), "data", "users.json");
+// In serverless environments like Vercel, write to /tmp directory or fallback to memory
+const isServerless = process.env.VERCEL === "1" || process.env.NODE_ENV === "production";
+const DB_PATH = isServerless
+  ? path.join("/tmp", "eduwallet_users.json")
+  : path.join(process.cwd(), "data", "users.json");
+
 const JWT_SECRET = process.env.JWT_SECRET || "eduwallet-dev-secret-change-in-production";
 
-// ─── Ensure data directory exists ───
+// In-memory fallback if disk write fails
+let inMemoryUsers: StoredUser[] = [];
+
 function ensureDataDir() {
-  const dir = path.dirname(DB_PATH);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  if (!fs.existsSync(DB_PATH)) {
-    fs.writeFileSync(DB_PATH, "[]");
+  try {
+    const dir = path.dirname(DB_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    if (!fs.existsSync(DB_PATH)) {
+      fs.writeFileSync(DB_PATH, "[]");
+    }
+  } catch (err) {
+    console.warn("FS warning, using in-memory store:", err);
   }
 }
 
-// ─── Read/Write Users ───
 export function getUsers(): StoredUser[] {
-  ensureDataDir();
-  const data = fs.readFileSync(DB_PATH, "utf-8");
-  return JSON.parse(data);
+  try {
+    ensureDataDir();
+    if (fs.existsSync(DB_PATH)) {
+      const data = fs.readFileSync(DB_PATH, "utf-8");
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.warn("Read error, returning memory users:", err);
+  }
+  return inMemoryUsers;
 }
 
 export function saveUsers(users: StoredUser[]) {
-  ensureDataDir();
-  fs.writeFileSync(DB_PATH, JSON.stringify(users, null, 2));
+  inMemoryUsers = users;
+  try {
+    ensureDataDir();
+    fs.writeFileSync(DB_PATH, JSON.stringify(users, null, 2));
+  } catch (err) {
+    console.warn("Save warning, kept in memory:", err);
+  }
 }
 
 export function findUserByEmail(email: string): StoredUser | undefined {
@@ -55,7 +77,7 @@ export function findUserByWallet(address: string): StoredUser | undefined {
   return getUsers().find((u) => u.walletAddress.toLowerCase() === address.toLowerCase());
 }
 
-// ─── Password Hashing (using Node crypto, no bcrypt needed) ───
+// ─── Password Hashing ───
 export function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString("hex");
   const hash = crypto.pbkdf2Sync(password, salt, 100000, 64, "sha512").toString("hex");
@@ -63,14 +85,16 @@ export function hashPassword(password: string): string {
 }
 
 export function verifyPassword(password: string, storedHash: string): boolean {
-  const [salt, hash] = storedHash.split(":");
-  const testHash = crypto.pbkdf2Sync(password, salt, 100000, 64, "sha512").toString("hex");
-  return hash === testHash;
+  try {
+    const [salt, hash] = storedHash.split(":");
+    const testHash = crypto.pbkdf2Sync(password, salt, 100000, 64, "sha512").toString("hex");
+    return hash === testHash;
+  } catch {
+    return false;
+  }
 }
 
 // ─── Wallet Encryption ───
-// Each user's private key is encrypted with a derived key from their password
-// This means even if the server is compromised, keys are protected
 function deriveEncryptionKey(password: string): Buffer {
   return crypto.pbkdf2Sync(password, "eduwallet-key-derivation", 10000, 32, "sha256");
 }
@@ -111,9 +135,14 @@ export function decryptPrivateKey(
 
 // ─── JWT Helpers ───
 export function createJWT(payload: object): string {
-  // Simple JWT implementation using Node crypto (no external deps)
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-  const body = Buffer.from(JSON.stringify({ ...payload, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 86400 })).toString("base64url");
+  const body = Buffer.from(
+    JSON.stringify({
+      ...payload,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 86400,
+    })
+  ).toString("base64url");
   const signature = crypto
     .createHmac("sha256", JWT_SECRET)
     .update(`${header}.${body}`)
@@ -147,10 +176,7 @@ export function createUser(
   password: string,
   role: "student" | "university"
 ): { user: StoredUser; token: string } {
-  // Generate Ethereum wallet
   const wallet = Wallet.createRandom();
-
-  // Encrypt private key with user's password
   const { encrypted, iv, authTag } = encryptPrivateKey(wallet.privateKey, password);
 
   const user: StoredUser = {

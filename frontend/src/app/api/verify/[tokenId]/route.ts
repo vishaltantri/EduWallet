@@ -1,13 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import * as fs from "fs";
-import * as path from "path";
-
-const CRED_PATH = path.join(process.cwd(), "data", "credentials.json");
-
-function getCredentials() {
-  if (!fs.existsSync(CRED_PATH)) return [];
-  return JSON.parse(fs.readFileSync(CRED_PATH, "utf-8"));
-}
+import { getCredentials } from "@/app/api/credentials/issue/route";
 
 // GET /api/verify/[tokenId]
 export async function GET(
@@ -23,7 +15,7 @@ export async function GET(
     }
 
     const creds = getCredentials();
-    const credential = creds.find((c: { tokenId: number }) => c.tokenId === id);
+    const credential = creds.find((c) => c.tokenId === id);
 
     if (!credential) {
       return NextResponse.json({ error: "Credential not found" }, { status: 404 });

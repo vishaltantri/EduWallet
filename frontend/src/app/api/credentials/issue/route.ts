@@ -5,10 +5,12 @@ import { v4 as uuidv4 } from "uuid";
 import * as fs from "fs";
 import * as path from "path";
 
-// ─── Credential Store (local JSON for prototype) ───
-const CRED_PATH = path.join(process.cwd(), "data", "credentials.json");
+const isServerless = process.env.VERCEL === "1" || process.env.NODE_ENV === "production";
+const CRED_PATH = isServerless
+  ? path.join("/tmp", "eduwallet_credentials.json")
+  : path.join(process.cwd(), "data", "credentials.json");
 
-interface StoredCredential {
+export interface StoredCredential {
   id: string;
   tokenId: number;
   studentAddress: string;
@@ -24,17 +26,32 @@ interface StoredCredential {
   isValid: boolean;
 }
 
-function getCredentials(): StoredCredential[] {
-  const dir = path.dirname(CRED_PATH);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  if (!fs.existsSync(CRED_PATH)) fs.writeFileSync(CRED_PATH, "[]");
-  return JSON.parse(fs.readFileSync(CRED_PATH, "utf-8"));
+let inMemoryCreds: StoredCredential[] = [];
+
+export function getCredentials(): StoredCredential[] {
+  try {
+    const dir = path.dirname(CRED_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    if (!fs.existsSync(CRED_PATH)) fs.writeFileSync(CRED_PATH, "[]");
+    if (fs.existsSync(CRED_PATH)) {
+      const data = fs.readFileSync(CRED_PATH, "utf-8");
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.warn("Read creds error, using in-memory:", err);
+  }
+  return inMemoryCreds;
 }
 
-function saveCredentials(creds: StoredCredential[]) {
-  const dir = path.dirname(CRED_PATH);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(CRED_PATH, JSON.stringify(creds, null, 2));
+export function saveCredentials(creds: StoredCredential[]) {
+  inMemoryCreds = creds;
+  try {
+    const dir = path.dirname(CRED_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(CRED_PATH, JSON.stringify(creds, null, 2));
+  } catch (err) {
+    console.warn("Save creds error, kept in memory:", err);
+  }
 }
 
 let nextTokenId = 1;
@@ -49,7 +66,6 @@ initTokenId();
 // ─── POST /api/credentials/issue ───
 export async function POST(request: NextRequest) {
   try {
-    // Verify auth
     const authHeader = request.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -71,7 +87,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "All fields are required" }, { status: 400 });
     }
 
-    // Find student
     const student = findUserByEmail(studentEmail);
     if (!student) {
       return NextResponse.json({ error: "Student not found. They must register on EduWallet first." }, { status: 404 });
@@ -80,7 +95,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Specified email is not a student account" }, { status: 400 });
     }
 
-    // 1. Upload Credential Metadata to Pinata IPFS
     const institutionName = `${issuer.name}'s Institution`;
     let ipfsHash = "";
 
@@ -101,7 +115,6 @@ export async function POST(request: NextRequest) {
       ipfsHash = `Qm${uuidv4().replace(/-/g, "").slice(0, 44)}`;
     }
 
-    // 2. Create credential record
     const tokenId = nextTokenId++;
     const credential: StoredCredential = {
       id: uuidv4(),
