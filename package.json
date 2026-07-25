@@ -1,0 +1,19 @@
+{
+  "name": "eduwallet",
+  "version": "1.0.0",
+  "description": "EduWallet — Decentralized Academic Credentials on Polygon",
+  "private": true,
+  "scripts": {
+    "dev": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "start": "cd frontend && npm start",
+    "contracts:compile": "cd contracts && npx hardhat compile",
+    "contracts:test": "cd contracts && npx hardhat test",
+    "contracts:deploy": "cd contracts && npx hardhat run scripts/deploy.js --network polygonAmoy",
+    "contracts:deploy:local": "cd contracts && npx hardhat run scripts/deploy.js --network localhost",
+    "docs:generate": "cd .venv && python generate_docs.py"
+  },
+  "keywords": ["blockchain", "credentials", "soulbound", "polygon", "eduwallet"],
+  "author": "",
+  "license": "MIT"
+}

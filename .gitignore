@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+.venv/
+
+# Build outputs
+contracts/artifacts/
+contracts/cache/
+contracts/typechain-types/
+frontend/.next/
+frontend/out/
+
+# Environment files
+.env
+.env.local
+contracts/.env
+
+# Data files (prototype local storage)
+frontend/data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
