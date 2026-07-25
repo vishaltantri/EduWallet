@@ -1,26 +1,25 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/AuthContext";
 import { Navbar } from "@/components/Navbar";
+import { Footer } from "@/components/Footer";
+import { ToastProvider } from "@/components/Toast";
 
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
 });
 
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+});
+
 export const metadata: Metadata = {
   title: "EduWallet — Decentralized Academic Credentials",
   description:
-    "Issue, manage, and verify tamper-proof academic credentials on the blockchain. No seed phrases, no complexity — just secure, verifiable certificates.",
-  keywords: [
-    "blockchain",
-    "academic credentials",
-    "soulbound tokens",
-    "decentralized",
-    "university",
-    "certificates",
-  ],
+    "Issue, manage, and verify tamper-proof academic credentials using Soulbound NFTs on Polygon.",
 };
 
 export default function RootLayout({
@@ -29,12 +28,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={inter.variable}>
-      <body className="antialiased">
-        <div className="bg-mesh" />
+    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
+      <body className="w-full min-h-screen bg-black text-white antialiased">
         <AuthProvider>
-          <Navbar />
-          <main className="min-h-screen pt-16">{children}</main>
+          <ToastProvider>
+            <Navbar />
+            <div className="w-full pt-16 min-h-[calc(100vh-4rem)]">
+              {children}
+            </div>
+            <Footer />
+          </ToastProvider>
         </AuthProvider>
       </body>
     </html>
