@@ -2,10 +2,10 @@
 
 import { useAuth } from "@/lib/AuthContext";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { PageLoader, ButtonSpinner } from "@/components/LoadingSpinner";
+import { PageLoader } from "@/components/LoadingSpinner";
 
 interface Credential {
   tokenId: number;
@@ -40,28 +40,31 @@ export default function StudentDashboard() {
     }
   }, [user, authLoading, router]);
 
-  useEffect(() => {
-    if (user && token) {
-      fetchCredentials();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, token]);
+  const fetchCredentials = useCallback(async () => {
+    if (!user || !token) return;
 
-  const fetchCredentials = async () => {
     try {
-      const res = await fetch(`/api/credentials/student/${user?.walletAddress}`, {
+      const res = await fetch(`/api/credentials/student/${user.walletAddress}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
         const data = await res.json();
         setCredentials(data.credentials || []);
+      } else {
+        setCredentials([]);
       }
     } catch (err) {
       console.error("Failed to fetch credentials:", err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [token, user]);
+
+  useEffect(() => {
+    if (!user || !token) return;
+    const fetchTimer = window.setTimeout(() => void fetchCredentials(), 0);
+    return () => window.clearTimeout(fetchTimer);
+  }, [fetchCredentials, token, user]);
 
   const filteredCredentials = useMemo(() => {
     return credentials.filter((cred) => {
@@ -162,7 +165,7 @@ export default function StudentDashboard() {
             transition={{ delay: i * 0.08 }}
             className="stat-card group"
           >
-            <div className={`absolute inset-0 bg-gradient-to-br ${stat.gradient} rounded-[inherit] opacity-0 group-hover:opacity-100 transition-opacity`} />
+            <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${stat.gradient} rounded-[inherit] opacity-0 group-hover:opacity-100 transition-opacity`} />
             <div className="relative flex items-center justify-between">
               <div>
                 <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">{stat.label}</p>

@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/lib/AuthContext";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageLoader, ButtonSpinner } from "@/components/LoadingSpinner";
 
@@ -23,6 +23,31 @@ export default function RecoveryPage() {
       router.push("/login");
     }
   }, [user, authLoading, router]);
+
+  const loadConfiguration = useCallback(async () => {
+    if (!token) return;
+    try {
+      const response = await fetch("/api/recovery/setup", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return;
+
+      const { configuration } = await response.json();
+      if (configuration) {
+        setGuardians(configuration.guardianEmails);
+        setThreshold(configuration.threshold);
+        setIsConfigured(true);
+      }
+    } catch (fetchError) {
+      console.error("Failed to load recovery configuration:", fetchError);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!user || !token || user.role !== "student") return;
+    const loadTimer = window.setTimeout(() => void loadConfiguration(), 0);
+    return () => window.clearTimeout(loadTimer);
+  }, [loadConfiguration, token, user]);
 
   const addGuardian = () => {
     if (!newGuardian.trim()) return;

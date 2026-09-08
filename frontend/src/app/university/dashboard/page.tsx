@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/lib/AuthContext";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageLoader, ButtonSpinner } from "@/components/LoadingSpinner";
 
@@ -40,26 +40,31 @@ export default function UniversityDashboard() {
     }
   }, [user, authLoading, router]);
 
-  useEffect(() => {
-    if (user && token) fetchIssued();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, token]);
+  const fetchIssued = useCallback(async () => {
+    if (!user || !token) return;
 
-  const fetchIssued = async () => {
     try {
-      const res = await fetch(`/api/credentials/issuer/${user?.walletAddress}`, {
+      const res = await fetch(`/api/credentials/issuer/${user.walletAddress}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
         const data = await res.json();
         setIssued(data.credentials || []);
+      } else {
+        setIssued([]);
       }
     } catch (err) {
       console.error("Failed to fetch:", err);
     } finally {
       setIssuedLoading(false);
     }
-  };
+  }, [token, user]);
+
+  useEffect(() => {
+    if (!user || !token) return;
+    const fetchTimer = window.setTimeout(() => void fetchIssued(), 0);
+    return () => window.clearTimeout(fetchTimer);
+  }, [fetchIssued, token, user]);
 
   const handleIssueClick = (e: React.FormEvent) => {
     e.preventDefault();
@@ -194,7 +199,7 @@ export default function UniversityDashboard() {
             transition={{ delay: i * 0.06 }}
             className="stat-card group"
           >
-            <div className={`absolute inset-0 bg-gradient-to-br ${stat.gradient} rounded-[inherit] opacity-0 group-hover:opacity-100 transition-opacity`} />
+            <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${stat.gradient} rounded-[inherit] opacity-0 group-hover:opacity-100 transition-opacity`} />
             <div className="relative flex items-center justify-between">
               <div>
                 <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">{stat.label}</p>

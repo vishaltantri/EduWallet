@@ -59,6 +59,8 @@ body {
 }
 
 .stat-card {
+  position: relative;
+  overflow: hidden;
   background-color: #09090b;
   border: 1px solid #27272a;
   border-radius: var(--radius-md);

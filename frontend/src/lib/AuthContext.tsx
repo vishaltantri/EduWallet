@@ -30,13 +30,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Load session from localStorage on mount
   useEffect(() => {
-    const savedToken = localStorage.getItem("eduwallet_token");
-    const savedUser = localStorage.getItem("eduwallet_user");
-    if (savedToken && savedUser) {
-      setToken(savedToken);
-      setUser(JSON.parse(savedUser));
-    }
-    setLoading(false);
+    const restoreSession = () => {
+      const savedToken = localStorage.getItem("eduwallet_token");
+      const savedUser = localStorage.getItem("eduwallet_user");
+
+      try {
+        if (savedToken && savedUser) {
+          setToken(savedToken);
+          setUser(JSON.parse(savedUser) as User);
+        } else {
+          setToken(null);
+          setUser(null);
+        }
+      } catch {
+        localStorage.removeItem("eduwallet_token");
+        localStorage.removeItem("eduwallet_user");
+        setToken(null);
+        setUser(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    // Defer the browser-only read until after hydration. This prevents a
+    // server/client markup mismatch while still restoring a session promptly.
+    const frame = requestAnimationFrame(restoreSession);
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {

@@ -4,12 +4,13 @@ import { findUserByEmail, verifyPassword, createJWT } from "@/lib/userStore";
 export async function POST(request: Request) {
   try {
     const { email, password } = await request.json();
+    const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
 
-    if (!email || !password) {
+    if (!normalizedEmail || typeof password !== "string" || !password) {
       return NextResponse.json({ error: "Email and password are required" }, { status: 400 });
     }
 
-    const user = findUserByEmail(email);
+    const user = findUserByEmail(normalizedEmail);
     if (!user) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
     }

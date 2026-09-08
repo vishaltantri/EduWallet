@@ -82,12 +82,20 @@ export async function POST(request: NextRequest) {
     }
 
     const { studentEmail, studentName, degreeType, major } = await request.json();
+    const normalizedStudentEmail = typeof studentEmail === "string" ? studentEmail.trim().toLowerCase() : "";
+    const normalizedStudentName = typeof studentName === "string" ? studentName.trim() : "";
+    const normalizedDegreeType = typeof degreeType === "string" ? degreeType.trim() : "";
+    const normalizedMajor = typeof major === "string" ? major.trim() : "";
 
-    if (!studentEmail || !studentName || !degreeType || !major) {
+    if (!normalizedStudentEmail || !normalizedStudentName || !normalizedDegreeType || !normalizedMajor) {
       return NextResponse.json({ error: "All fields are required" }, { status: 400 });
     }
 
-    const student = findUserByEmail(studentEmail);
+    if (!/^\S+@\S+\.\S+$/.test(normalizedStudentEmail)) {
+      return NextResponse.json({ error: "Please enter a valid student email address" }, { status: 400 });
+    }
+
+    const student = findUserByEmail(normalizedStudentEmail);
     if (!student) {
       return NextResponse.json({ error: "Student not found. They must register on EduWallet first." }, { status: 404 });
     }
@@ -100,12 +108,12 @@ export async function POST(request: NextRequest) {
 
     try {
       ipfsHash = await uploadJSONToIPFS({
-        name: `${degreeType} in ${major}`,
-        description: `Official Soulbound Academic Credential issued to ${studentName} by ${institutionName}.`,
+        name: `${normalizedDegreeType} in ${normalizedMajor}`,
+        description: `Official Soulbound Academic Credential issued to ${normalizedStudentName} by ${institutionName}.`,
         attributes: [
-          { trait_type: "Student Name", value: studentName },
-          { trait_type: "Degree Type", value: degreeType },
-          { trait_type: "Major", value: major },
+          { trait_type: "Student Name", value: normalizedStudentName },
+          { trait_type: "Degree Type", value: normalizedDegreeType },
+          { trait_type: "Major", value: normalizedMajor },
           { trait_type: "Institution", value: institutionName },
           { trait_type: "Issued Date", value: new Date().toISOString() },
         ],
@@ -120,12 +128,12 @@ export async function POST(request: NextRequest) {
       id: uuidv4(),
       tokenId,
       studentAddress: student.walletAddress,
-      studentName,
+      studentName: normalizedStudentName,
       studentEmail: student.email,
       issuerAddress: issuer.walletAddress,
       issuerEmail: issuer.email,
-      degreeType,
-      major,
+      degreeType: normalizedDegreeType,
+      major: normalizedMajor,
       institutionName,
       ipfsHash,
       issuedAt: new Date().toISOString(),
