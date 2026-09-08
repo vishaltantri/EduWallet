@@ -149,6 +149,7 @@ export async function POST(request: NextRequest) {
       message: "Certificate issued & metadata pinned to IPFS successfully!",
       ipfsHash: credential.ipfsHash,
       credential: {
+        id: credential.id,
         tokenId: credential.tokenId,
         studentName: credential.studentName,
         degreeType: credential.degreeType,

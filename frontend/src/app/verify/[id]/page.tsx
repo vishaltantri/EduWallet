@@ -29,7 +29,7 @@ const verificationSteps = [
 
 export default function VerifyPage() {
   const params = useParams();
-  const tokenId = params.tokenId as string;
+  const id = params.id as string;
   const [data, setData] = useState<VerificationData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -63,7 +63,7 @@ export default function VerifyPage() {
 
   async function fetchVerification(signal: AbortSignal): Promise<(() => void) | undefined> {
     try {
-      const res = await fetch(`/api/verify/${tokenId}`, { signal });
+      const res = await fetch(`/api/verify/${id}`, { signal });
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || "Verification failed");
@@ -90,7 +90,7 @@ export default function VerifyPage() {
       setLoading(true);
       setError("");
 
-      if (tokenId === "demo") {
+      if (id === "demo") {
         stopAnimation = runVerificationAnimation({
           isValid: true,
           tokenId: 1,
@@ -120,7 +120,7 @@ export default function VerifyPage() {
     };
   // Verification changes only when the route token changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tokenId]);
+  }, [id]);
 
   const copyLink = () => {
     navigator.clipboard.writeText(window.location.href);
@@ -143,7 +143,7 @@ export default function VerifyPage() {
               </svg>
             </div>
             <h2 className="text-lg font-bold mb-1">Verifying Credential</h2>
-            <p className="text-xs text-zinc-500">Token #{tokenId}</p>
+            <p className="text-xs text-zinc-500">Credential ID {id.slice(0, 8)}...</p>
           </div>
 
           <div className="space-y-3 text-left">

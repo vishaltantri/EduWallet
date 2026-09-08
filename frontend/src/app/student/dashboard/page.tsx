@@ -8,6 +8,7 @@ import Link from "next/link";
 import { PageLoader } from "@/components/LoadingSpinner";
 
 interface Credential {
+  id: string;
   tokenId: number;
   studentName: string;
   degreeType: string;
@@ -80,8 +81,8 @@ export default function StudentDashboard() {
     });
   }, [credentials, searchQuery, filterStatus]);
 
-  const copyVerifyLink = (tokenId: number) => {
-    const link = `${window.location.origin}/verify/${tokenId}`;
+  const copyVerifyLink = (id: string, tokenId: number) => {
+    const link = `${window.location.origin}/verify/${id}`;
     navigator.clipboard.writeText(link);
     setCopied(tokenId);
     setTimeout(() => setCopied(null), 2000);
@@ -190,7 +191,7 @@ export default function StudentDashboard() {
           Manage Recovery
         </Link>
         {credentials.length > 0 && (
-          <Link href={`/verify/${credentials[0]?.tokenId}`} className="btn-secondary !py-2 !px-4 !text-xs">
+          <Link href={`/verify/${credentials[0]?.id}`} className="btn-secondary !py-2 !px-4 !text-xs">
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
             </svg>
@@ -308,7 +309,7 @@ export default function StudentDashboard() {
                 </div>
                 <div className="flex gap-2 sm:flex-shrink-0">
                   <button
-                    onClick={() => copyVerifyLink(cred.tokenId)}
+                    onClick={() => copyVerifyLink(cred.id, cred.tokenId)}
                     className="btn-secondary !py-2 !px-3.5 !text-xs"
                   >
                     {copied === cred.tokenId ? (
@@ -328,7 +329,7 @@ export default function StudentDashboard() {
                     )}
                   </button>
                   <Link
-                    href={`/verify/${cred.tokenId}`}
+                    href={`/verify/${cred.id}`}
                     className="btn-primary !py-2 !px-3.5 !text-xs"
                   >
                     View

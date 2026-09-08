@@ -1,21 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCredentials } from "@/app/api/credentials/issue/route";
 
-// GET /api/verify/[tokenId]
+// GET /api/verify/[id]
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tokenId: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { tokenId } = await params;
-    const id = parseInt(tokenId);
-
-    if (isNaN(id)) {
-      return NextResponse.json({ error: "Invalid token ID" }, { status: 400 });
-    }
+    const { id } = await params;
 
     const creds = getCredentials();
-    const credential = creds.find((c) => c.tokenId === id);
+    const credential = creds.find((c) => c.id === id);
 
     if (!credential) {
       return NextResponse.json({ error: "Credential not found" }, { status: 404 });
