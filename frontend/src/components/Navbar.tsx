@@ -28,11 +28,11 @@ export function Navbar() {
   const isActive = (path: string) => pathname === path;
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-black border-b border-zinc-800 h-16 flex items-center">
+    <nav className="fixed top-0 left-0 right-0 z-50 bg-[#070b14]/90 backdrop-blur-xl border-b border-slate-800/80 h-16 flex items-center">
       <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-white text-black font-bold text-base flex items-center justify-center">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-teal-300 to-cyan-400 text-slate-950 font-bold text-base flex items-center justify-center shadow-lg shadow-cyan-500/20">
             E
           </div>
           <div className="flex items-center gap-2">

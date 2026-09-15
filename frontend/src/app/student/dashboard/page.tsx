@@ -95,7 +95,7 @@ export default function StudentDashboard() {
   const validCount = credentials.filter((c) => c.isValid).length;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
       {/* Welcome Header */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -164,7 +164,7 @@ export default function StudentDashboard() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.08 }}
-            className="stat-card group"
+            className="stat-card group shadow-xl shadow-slate-950/20"
           >
             <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${stat.gradient} rounded-[inherit] opacity-0 group-hover:opacity-100 transition-opacity`} />
             <div className="relative flex items-center justify-between">

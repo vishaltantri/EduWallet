@@ -4,9 +4,9 @@ import Link from "next/link";
 
 export default function HomePage() {
   return (
-    <div className="w-full bg-black text-white">
+    <div className="w-full text-white overflow-hidden">
       {/* ─── Hero Section ─── */}
-      <section className="enterprise-section py-16 sm:py-24">
+      <section className="enterprise-section relative py-20 sm:py-28">
         <div className="enterprise-container">
           {/* Badge */}
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-zinc-800 bg-zinc-900 mb-6 text-xs text-zinc-300">
@@ -45,7 +45,7 @@ export default function HomePage() {
           </div>
 
           {/* Hero Digital Certificate Mockup Card */}
-          <div className="w-full max-w-2xl mx-auto text-left border border-zinc-800 bg-zinc-950 rounded-2xl p-6 sm:p-8 shadow-2xl">
+          <div className="w-full max-w-2xl mx-auto text-left border border-slate-700/80 bg-slate-950/80 rounded-3xl p-6 sm:p-8 shadow-2xl shadow-cyan-950/30 backdrop-blur">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-4 mb-6">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg bg-white text-black font-bold flex items-center justify-center text-base">
