@@ -14,9 +14,11 @@ export interface CredentialMetadata {
  * Upload JSON metadata to IPFS via Pinata API
  */
 export async function uploadJSONToIPFS(metadata: CredentialMetadata): Promise<string> {
+  // Returning a made-up "Qm..." string here would put an IPFS CID on the
+  // certificate that resolves to nothing. Fail instead and let the caller
+  // record the metadata as local-only.
   if (!PINATA_JWT) {
-    console.warn("PINATA_JWT is missing, using fallback hash format");
-    return `QmFallback${Date.now()}`;
+    throw new Error("PINATA_JWT is not configured");
   }
 
   try {
@@ -51,10 +53,39 @@ export async function uploadJSONToIPFS(metadata: CredentialMetadata): Promise<st
 /**
  * Get public gateway URL for an IPFS CID
  */
+export function isIPFSConfigured(): boolean {
+  return Boolean(PINATA_JWT);
+}
+
 export function getIPFSGatewayURL(ipfsHash: string): string {
   if (ipfsHash.startsWith("ipfs://")) {
     ipfsHash = ipfsHash.replace("ipfs://", "");
   }
   const gateway = process.env.PINATA_GATEWAY || "https://gateway.pinata.cloud";
   return `${gateway}/ipfs/${ipfsHash}`;
+}
+
+/**
+ * Confirm the Pinata credentials actually work.
+ *
+ * A present-but-invalid JWT looks identical to a working one until the first
+ * upload fails, which is exactly when it is least useful to find out.
+ */
+export async function checkIPFSHealth(): Promise<{ configured: boolean; reachable: boolean; detail?: string }> {
+  if (!PINATA_JWT) return { configured: false, reachable: false, detail: "PINATA_JWT is not set" };
+
+  try {
+    const response = await fetch("https://api.pinata.cloud/data/testAuthentication", {
+      headers: { Authorization: `Bearer ${PINATA_JWT}` },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (response.ok) return { configured: true, reachable: true };
+    return { configured: true, reachable: false, detail: `Pinata rejected the key (${response.status})` };
+  } catch (error) {
+    return {
+      configured: true,
+      reachable: false,
+      detail: error instanceof Error ? error.message : "Pinata unreachable",
+    };
+  }
 }

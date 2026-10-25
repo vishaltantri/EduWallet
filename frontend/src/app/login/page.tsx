@@ -22,13 +22,8 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      await login(email, password);
-      // AuthContext stores the user — redirect based on role
-      const savedUser = localStorage.getItem("eduwallet_user");
-      if (savedUser) {
-        const user = JSON.parse(savedUser);
-        router.push(user.role === "student" ? "/student/dashboard" : "/university/dashboard");
-      }
+      const user = await login(email, password);
+      router.push(user.role === "student" ? "/student/dashboard" : "/university/dashboard");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {

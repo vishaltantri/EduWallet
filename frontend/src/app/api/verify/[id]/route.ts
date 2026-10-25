@@ -1,33 +1,29 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getCredentials } from "@/app/api/credentials/issue/route";
+import { NextResponse } from "next/server";
+import { originLabel } from "@/lib/auth";
+import { findCredentialById, recordVerification } from "@/lib/stores";
+import { buildVerification, resolveOutcome } from "@/lib/verification";
 
-// GET /api/verify/[id]
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+// GET /api/verify/[id] — public, no authentication required.
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-
-    const creds = getCredentials();
-    const credential = creds.find((c) => c.id === id);
+    const credential = await findCredentialById(id);
 
     if (!credential) {
-      return NextResponse.json({ error: "Credential not found" }, { status: 404 });
+      return NextResponse.json({ error: "Credential not found", outcome: "not_found" }, { status: 404 });
     }
 
-    return NextResponse.json({
-      isValid: credential.isValid,
-      tokenId: credential.tokenId,
-      studentName: credential.studentName,
-      degreeType: credential.degreeType,
-      major: credential.major,
-      institutionName: credential.institutionName,
-      issuerAddress: credential.issuerAddress,
-      studentAddress: credential.studentAddress,
-      issuedAt: credential.issuedAt,
-      ipfsHash: credential.ipfsHash,
+    // Snapshot the count before logging this check, so the response reads
+    // "verified 3 times before" rather than counting the caller's own visit.
+    const response = await buildVerification(credential);
+
+    await recordVerification({
+      credentialId: credential.id,
+      outcome: resolveOutcome(credential),
+      origin: originLabel(request),
     });
+
+    return NextResponse.json(response, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("Verify error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

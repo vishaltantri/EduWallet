@@ -5,9 +5,31 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageLoader, ButtonSpinner } from "@/components/LoadingSpinner";
+import { WalletExport } from "@/components/WalletExport";
+import { PasswordChange } from "@/components/PasswordChange";
+import { RecoveryRequests } from "@/components/RecoveryRequests";
+
+interface StoredRecoveryConfiguration {
+  guardianEmails: string[];
+  threshold: number;
+}
+
+async function fetchRecoveryConfiguration(
+  authFetch: (input: string, init?: RequestInit) => Promise<Response>
+): Promise<StoredRecoveryConfiguration | null> {
+  try {
+    const response = await authFetch("/api/recovery/setup");
+    if (!response.ok) return null;
+    const { configuration } = await response.json();
+    return (configuration as StoredRecoveryConfiguration) ?? null;
+  } catch (error) {
+    console.error("Failed to load recovery configuration:", error);
+    return null;
+  }
+}
 
 export default function RecoveryPage() {
-  const { user, token, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, authFetch } = useAuth();
   const router = useRouter();
   const [guardians, setGuardians] = useState<string[]>([]);
   const [newGuardian, setNewGuardian] = useState("");
@@ -17,6 +39,8 @@ export default function RecoveryPage() {
   const [error, setError] = useState("");
   const [isConfigured, setIsConfigured] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [requestsRefresh, setRequestsRefresh] = useState(0);
+  const [chainNote, setChainNote] = useState("");
 
   useEffect(() => {
     if (!authLoading && (!user || user.role !== "student")) {
@@ -24,34 +48,34 @@ export default function RecoveryPage() {
     }
   }, [user, authLoading, router]);
 
-  const loadConfiguration = useCallback(async () => {
-    if (!token) return;
-    try {
-      const response = await fetch("/api/recovery/setup", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) return;
-
-      const { configuration } = await response.json();
-      if (configuration) {
+  const loadConfiguration = useCallback(
+    () =>
+      fetchRecoveryConfiguration(authFetch).then((configuration) => {
+        if (!configuration) return;
         setGuardians(configuration.guardianEmails);
         setThreshold(configuration.threshold);
         setIsConfigured(true);
-      }
-    } catch (fetchError) {
-      console.error("Failed to load recovery configuration:", fetchError);
-    }
-  }, [token]);
+      }),
+    [authFetch]
+  );
 
   useEffect(() => {
-    if (!user || !token || user.role !== "student") return;
-    const loadTimer = window.setTimeout(() => void loadConfiguration(), 0);
-    return () => window.clearTimeout(loadTimer);
-  }, [loadConfiguration, token, user]);
+    if (!user || user.role !== "student") return;
+    void loadConfiguration();
+  }, [loadConfiguration, user]);
 
   const addGuardian = () => {
-    if (!newGuardian.trim()) return;
-    if (guardians.includes(newGuardian.trim())) {
+    const email = newGuardian.trim().toLowerCase();
+    if (!email) return;
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setError("Enter a valid email address");
+      return;
+    }
+    if (email === user?.email.toLowerCase()) {
+      setError("You cannot be your own guardian");
+      return;
+    }
+    if (guardians.includes(email)) {
       setError("Guardian already added");
       return;
     }
@@ -59,7 +83,7 @@ export default function RecoveryPage() {
       setError("Maximum 5 guardians allowed");
       return;
     }
-    setGuardians([...guardians, newGuardian.trim()]);
+    setGuardians([...guardians, email]);
     setNewGuardian("");
     setError("");
   };
@@ -83,19 +107,21 @@ export default function RecoveryPage() {
     setError("");
 
     try {
-      const res = await fetch("/api/recovery/setup", {
+      const res = await authFetch("/api/recovery/setup", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
         body: JSON.stringify({ guardianEmails: guardians, threshold }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) throw new Error(data.error || "Setup failed");
 
-      setSuccess("Guardians configured successfully! Your account is now recoverable via M-of-N social recovery.");
+      setSuccess(
+        data.txHash
+          ? "Guardians configured and registered on the RecoveryManager contract. Your account is now recoverable."
+          : "Guardians configured. Your account is now recoverable via M-of-N social recovery."
+      );
+      setChainNote(typeof data.chainError === "string" ? data.chainError : "");
       setIsConfigured(true);
+      setRequestsRefresh((value) => value + 1);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Setup failed");
     } finally {
@@ -235,6 +261,15 @@ export default function RecoveryPage() {
           </motion.div>
         )}
 
+        {chainNote && (
+          <div className="alert alert-warning mb-4 items-start">
+            <span className="text-xs leading-relaxed">
+              Your guardians are saved here, but the on-chain registration did not complete:{" "}
+              {chainNote}
+            </span>
+          </div>
+        )}
+
         {/* Add Guardian */}
         <div className="mb-6">
           <label className="input-label">Add Guardian (email of registered university staff)</label>
@@ -353,7 +388,13 @@ export default function RecoveryPage() {
         </button>
       </motion.div>
 
-      {/* Confirmation Modal */}
+      {/* Open recovery requests against this account, and the veto. */}
+      <div className="mt-8 space-y-6">
+        <RecoveryRequests mode="student" key={requestsRefresh} />
+        <WalletExport />
+        <PasswordChange />
+      </div>
+
       <AnimatePresence>
         {showConfirm && (
           <motion.div
@@ -382,7 +423,9 @@ export default function RecoveryPage() {
                 ))}
               </div>
               <p className="text-xs text-slate-500 mb-5">
-                This will be recorded on the Polygon blockchain via the RecoveryManager smart contract.
+                Your guardian set is recorded in EduWallet and registered on the RecoveryManager
+                contract. Any of these guardians can then open a recovery request, which needs
+                your chosen threshold of approvals and a 24-hour delay you can cancel within.
               </p>
               <div className="flex gap-3">
                 <button onClick={() => setShowConfirm(false)} className="btn-secondary flex-1 !py-2.5">

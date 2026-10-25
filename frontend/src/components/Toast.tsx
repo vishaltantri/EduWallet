@@ -61,7 +61,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const showToast = useCallback((message: string, type: ToastType = "info") => {
-    const id = Date.now().toString();
+    // Date.now() collided when two toasts fired in the same millisecond,
+    // which gave React duplicate keys and dropped one of them.
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));

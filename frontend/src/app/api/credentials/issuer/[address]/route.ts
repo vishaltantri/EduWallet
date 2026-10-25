@@ -1,34 +1,39 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getCredentials } from "@/app/api/credentials/issue/route";
-import { findUserById, verifyJWT } from "@/lib/userStore";
+import { NextResponse } from "next/server";
+import { isErrorResult, requireRole } from "@/lib/auth";
+import { getCredentials, getVerificationEvents } from "@/lib/stores";
 
 // GET /api/credentials/issuer/[address]
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ address: string }> }
-) {
+export async function GET(request: Request, { params }: { params: Promise<{ address: string }> }) {
   try {
     const { address } = await params;
-    const authorization = request.headers.get("authorization");
-    if (!authorization?.startsWith("Bearer ")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const auth = await requireRole(request, "university");
+    if (isErrorResult(auth)) return auth.response;
+
+    if (auth.user.walletAddress.toLowerCase() !== address.toLowerCase()) {
+      return NextResponse.json(
+        { error: "You can only view credentials issued by your institution" },
+        { status: 403 }
+      );
     }
 
-    const payload = verifyJWT(authorization.slice(7));
-    const user = payload && typeof payload.userId === "string" ? findUserById(payload.userId) : undefined;
-    if (!user) {
-      return NextResponse.json({ error: "Invalid token" }, { status: 401 });
-    }
-    if (user.role !== "university" || user.walletAddress.toLowerCase() !== address.toLowerCase()) {
-      return NextResponse.json({ error: "You can only view credentials issued by your institution" }, { status: 403 });
-    }
-
-    const creds = getCredentials();
-    const issuerCreds = creds.filter(
-      (c) => c.issuerAddress.toLowerCase() === address.toLowerCase()
+    const [credentials, events] = await Promise.all([getCredentials(), getVerificationEvents()]);
+    const issued = credentials.filter(
+      (credential) => credential.issuerAddress.toLowerCase() === address.toLowerCase()
     );
 
-    return NextResponse.json({ credentials: issuerCreds });
+    const verificationCounts = new Map<string, number>();
+    for (const event of events) {
+      verificationCounts.set(event.credentialId, (verificationCounts.get(event.credentialId) ?? 0) + 1);
+    }
+
+    return NextResponse.json({
+      credentials: issued
+        .map((credential) => ({
+          ...credential,
+          verificationCount: verificationCounts.get(credential.id) ?? 0,
+        }))
+        .sort((a, b) => b.issuedAt.localeCompare(a.issuedAt)),
+    });
   } catch (error) {
     console.error("Fetch error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

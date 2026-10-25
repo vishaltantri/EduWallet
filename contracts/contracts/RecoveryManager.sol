@@ -157,6 +157,11 @@ contract RecoveryManager {
 
         GuardianConfig storage config = _guardianConfigs[msg.sender];
 
+        // Captured before mutation: `config.isConfigured` is set to true below,
+        // so reading it afterwards always reported "already configured" and the
+        // first-time GuardiansConfigured event was never emitted.
+        bool wasConfigured = config.isConfigured;
+
         // Clear previous guardians if reconfiguring
         for (uint256 i = 0; i < config.guardians.length; i++) {
             config.isGuardian[config.guardians[i]] = false;
@@ -176,10 +181,10 @@ contract RecoveryManager {
         config.threshold = threshold;
         config.isConfigured = true;
 
-        if (config.guardians.length == guardians.length && !config.isConfigured) {
-            emit GuardiansConfigured(msg.sender, guardians, threshold, block.timestamp);
-        } else {
+        if (wasConfigured) {
             emit GuardiansUpdated(msg.sender, guardians, threshold, block.timestamp);
+        } else {
+            emit GuardiansConfigured(msg.sender, guardians, threshold, block.timestamp);
         }
     }
 

@@ -11,7 +11,7 @@ export default function HomePage() {
           {/* Badge */}
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-zinc-800 bg-zinc-900 mb-6 text-xs text-zinc-300">
             <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            <span>Polygon Amoy Testnet • Soulbound ERC-5192 Credentials</span>
+            <span>Signed Credentials • Soulbound ERC-5192 • Polygon Amoy</span>
           </div>
 
           {/* Heading */}
@@ -21,7 +21,7 @@ export default function HomePage() {
 
           {/* Subtitle */}
           <p className="text-base sm:text-lg text-zinc-400 mb-8 max-w-2xl mx-auto leading-relaxed text-center-force">
-            Issue tamper-proof soulbound certificates for graduates. Verify credentials instantly with a public link — no crypto wallets, seed phrases, or gas fees required for users.
+            Institutions sign each certificate with their own wallet key. Anyone can check that signature from a public link in seconds — no account, no wallet, no seed phrase, and no call to the registrar.
           </p>
 
           {/* CTA Buttons */}
@@ -29,8 +29,8 @@ export default function HomePage() {
             <Link href="/register" className="btn-primary w-full sm:w-auto !py-3 !px-6 !text-sm">
               Get Started Free →
             </Link>
-            <Link href="/verify/demo" className="btn-secondary w-full sm:w-auto !py-3 !px-6 !text-sm">
-              View Demo Verification
+            <Link href="/verify" className="btn-secondary w-full sm:w-auto !py-3 !px-6 !text-sm">
+              Verify a Credential
             </Link>
           </div>
 
@@ -107,7 +107,7 @@ export default function HomePage() {
       </section>
 
       {/* ─── Key Features ─── */}
-      <section className="enterprise-section py-16 sm:py-24">
+      <section id="features" className="enterprise-section py-16 sm:py-24 scroll-mt-20">
         <div className="enterprise-container">
           <div className="text-center max-w-3xl mx-auto mb-16">
             <span className="badge badge-info mb-3">Enterprise Core Features</span>
@@ -123,27 +123,39 @@ export default function HomePage() {
             {[
               {
                 title: "Soulbound Certificates",
-                desc: "Certificates are minted as non-transferable NFTs (ERC-5192). Once bound to a student's account, they cannot be sold or transferred.",
+                desc: "Certificates are minted as non-transferable NFTs (ERC-5192). Once bound to a student's account, they cannot be sold, traded, or handed on.",
+              },
+              {
+                title: "Issuer Signatures",
+                desc: "Every certificate is hashed and signed by the issuing institution's wallet. A verifier recovers the signer from the signature — no trust in this website required.",
               },
               {
                 title: "No Seed Phrase Complexity",
-                desc: "Users login with email and password. Server-managed accounts encrypt private keys client-side using AES-256-GCM.",
+                desc: "Users sign in with email and password. A wallet is generated for them and its key is sealed with AES-256-GCM under a key derived from that password.",
+              },
+              {
+                title: "Revocation That Verifiers See",
+                desc: "Institutions can withdraw a certificate with a stated reason. Anyone holding the link sees the change immediately, not months later.",
+              },
+              {
+                title: "Expiring, Private Share Links",
+                desc: "Students mint scoped links that expire on their own and can withhold their name — proving the qualification without handing over their identity.",
+              },
+              {
+                title: "Verification Audit Trail",
+                desc: "Students and institutions see how often a credential was checked and roughly from where, turning verification into a signal rather than a black box.",
+              },
+              {
+                title: "Bulk Issuance",
+                desc: "Upload a CSV to issue a whole graduating cohort in one pass, with a dry-run validation step before anything is minted.",
+              },
+              {
+                title: "Portable W3C Credentials",
+                desc: "Download any certificate as a W3C Verifiable Credential with its signature attached — readable by other wallets and viewers, and usable offline.",
               },
               {
                 title: "Social Recovery",
-                desc: "Lost account access? M-of-N social recovery with university guardians (registrar, advisor) restores account access safely.",
-              },
-              {
-                title: "Instant Verification",
-                desc: "Employers verify credentials via a shareable link. On-chain validation queries Polygon in real time with zero gas cost.",
-              },
-              {
-                title: "Near-Zero Cost",
-                desc: "Built on Polygon L2. Certificate issuance costs fractions of a cent versus $50–200 for traditional notarization.",
-              },
-              {
-                title: "Decentralized IPFS Storage",
-                desc: "Metadata and certificates are permanently stored on IPFS via Pinata, ensuring perpetual access independent of servers.",
+                desc: "M-of-N recovery with institutional guardians (registrar, advisor) restores account access without a single point of failure.",
               },
             ].map((feature) => (
               <div key={feature.title} className="p-6 rounded-xl border border-zinc-800 bg-zinc-950 hover:border-zinc-700 transition-colors">
@@ -156,7 +168,7 @@ export default function HomePage() {
       </section>
 
       {/* ─── How It Works ─── */}
-      <section className="enterprise-section py-16 sm:py-24 border-t border-zinc-800 bg-zinc-950">
+      <section id="how-it-works" className="enterprise-section py-16 sm:py-24 border-t border-zinc-800 bg-zinc-950 scroll-mt-20">
         <div className="enterprise-container">
           <div className="text-center max-w-3xl mx-auto mb-16">
             <span className="badge badge-purple mb-3">Workflow</span>
@@ -179,7 +191,7 @@ export default function HomePage() {
               {
                 step: "03",
                 title: "Employer Verifies",
-                desc: "Employers open the link to instantly view verified degree details and smart contract cryptographic proof.",
+                desc: "Employers open the link and see the degree, the signature check, and whether it has been revoked — with no account of their own.",
               },
             ].map((step) => (
               <div key={step.step} className="p-6 rounded-xl bg-black border border-zinc-800">
@@ -211,11 +223,12 @@ export default function HomePage() {
             </div>
 
             {[
-              { f: "Verification Time", t: "3 to 15 Days (Manual)", e: "< 2 Seconds (Instant)" },
+              { f: "Verification Time", t: "3 to 15 Days (Manual)", e: "Seconds (Self-Service)" },
               { f: "Cost per Verification", t: "$25 – $100 Per Request", e: "< $0.001 (On-Chain)" },
-              { f: "Forgery Risk", t: "High (Photoshop / Paper)", e: "Zero (Cryptographic Proof)" },
+              { f: "Forgery Risk", t: "High (Photoshop / Paper)", e: "Detectable (Signature Check)" },
               { f: "Data Storage", t: "Centralized DB", e: "Immutable Blockchain + IPFS" },
               { f: "Account Recovery", t: "Single Password / Helpdesk", e: "M-of-N Guardian Social Recovery" },
+              { f: "Revocation Visibility", t: "Verifier Must Re-Enquire", e: "Shown On The Same Link" },
             ].map((row, idx) => (
               <div key={row.f} className={`grid grid-cols-3 p-4 text-xs sm:text-sm border-b border-zinc-800/60 ${idx % 2 === 0 ? "bg-black" : "bg-zinc-950"}`}>
                 <div className="font-semibold text-zinc-200">{row.f}</div>

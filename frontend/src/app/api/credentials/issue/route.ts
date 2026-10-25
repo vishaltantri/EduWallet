@@ -1,162 +1,24 @@
-import { NextRequest, NextResponse } from "next/server";
-import { findUserByEmail, findUserById, verifyJWT } from "@/lib/userStore";
-import { uploadJSONToIPFS } from "@/lib/ipfs";
-import { v4 as uuidv4 } from "uuid";
-import * as fs from "fs";
-import * as path from "path";
+import { NextResponse } from "next/server";
+import { isErrorResult, requireRole } from "@/lib/auth";
+import { issueCredential, normalizeIssuance } from "@/lib/issuance";
 
-const isServerless = process.env.VERCEL === "1" || process.env.NODE_ENV === "production";
-const CRED_PATH = isServerless
-  ? path.join("/tmp", "eduwallet_credentials.json")
-  : path.join(process.cwd(), "data", "credentials.json");
-
-export interface StoredCredential {
-  id: string;
-  tokenId: number;
-  studentAddress: string;
-  studentName: string;
-  studentEmail: string;
-  issuerAddress: string;
-  issuerEmail: string;
-  degreeType: string;
-  major: string;
-  institutionName: string;
-  ipfsHash: string;
-  issuedAt: string;
-  isValid: boolean;
-}
-
-let inMemoryCreds: StoredCredential[] = [];
-
-export function getCredentials(): StoredCredential[] {
+export async function POST(request: Request) {
   try {
-    const dir = path.dirname(CRED_PATH);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    if (!fs.existsSync(CRED_PATH)) fs.writeFileSync(CRED_PATH, "[]");
-    if (fs.existsSync(CRED_PATH)) {
-      const data = fs.readFileSync(CRED_PATH, "utf-8");
-      return JSON.parse(data);
+    const auth = await requireRole(request, "university");
+    if (isErrorResult(auth)) return auth.response;
+
+    const body = await request.json();
+    const result = await issueCredential(auth.user, normalizeIssuance(body));
+
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: result.status });
     }
-  } catch (err) {
-    console.warn("Read creds error, using in-memory:", err);
-  }
-  return inMemoryCreds;
-}
-
-export function saveCredentials(creds: StoredCredential[]) {
-  inMemoryCreds = creds;
-  try {
-    const dir = path.dirname(CRED_PATH);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(CRED_PATH, JSON.stringify(creds, null, 2));
-  } catch (err) {
-    console.warn("Save creds error, kept in memory:", err);
-  }
-}
-
-let nextTokenId = 1;
-function initTokenId() {
-  const creds = getCredentials();
-  if (creds.length > 0) {
-    nextTokenId = Math.max(...creds.map((c) => c.tokenId)) + 1;
-  }
-}
-initTokenId();
-
-// ─── POST /api/credentials/issue ───
-export async function POST(request: NextRequest) {
-  try {
-    const authHeader = request.headers.get("authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const payload = verifyJWT(authHeader.slice(7));
-    if (!payload) {
-      return NextResponse.json({ error: "Invalid token" }, { status: 401 });
-    }
-
-    const issuer = findUserById(payload.userId as string);
-    if (!issuer || issuer.role !== "university") {
-      return NextResponse.json({ error: "Only university staff can issue credentials" }, { status: 403 });
-    }
-
-    const { studentEmail, studentName, degreeType, major } = await request.json();
-    const normalizedStudentEmail = typeof studentEmail === "string" ? studentEmail.trim().toLowerCase() : "";
-    const normalizedStudentName = typeof studentName === "string" ? studentName.trim() : "";
-    const normalizedDegreeType = typeof degreeType === "string" ? degreeType.trim() : "";
-    const normalizedMajor = typeof major === "string" ? major.trim() : "";
-
-    if (!normalizedStudentEmail || !normalizedStudentName || !normalizedDegreeType || !normalizedMajor) {
-      return NextResponse.json({ error: "All fields are required" }, { status: 400 });
-    }
-
-    if (!/^\S+@\S+\.\S+$/.test(normalizedStudentEmail)) {
-      return NextResponse.json({ error: "Please enter a valid student email address" }, { status: 400 });
-    }
-
-    const student = findUserByEmail(normalizedStudentEmail);
-    if (!student) {
-      return NextResponse.json({ error: "Student not found. They must register on EduWallet first." }, { status: 404 });
-    }
-    if (student.role !== "student") {
-      return NextResponse.json({ error: "Specified email is not a student account" }, { status: 400 });
-    }
-
-    const institutionName = `${issuer.name}'s Institution`;
-    let ipfsHash = "";
-
-    try {
-      ipfsHash = await uploadJSONToIPFS({
-        name: `${normalizedDegreeType} in ${normalizedMajor}`,
-        description: `Official Soulbound Academic Credential issued to ${normalizedStudentName} by ${institutionName}.`,
-        attributes: [
-          { trait_type: "Student Name", value: normalizedStudentName },
-          { trait_type: "Degree Type", value: normalizedDegreeType },
-          { trait_type: "Major", value: normalizedMajor },
-          { trait_type: "Institution", value: institutionName },
-          { trait_type: "Issued Date", value: new Date().toISOString() },
-        ],
-      });
-    } catch (ipfsError) {
-      console.warn("Falling back to synthetic IPFS hash:", ipfsError);
-      ipfsHash = `Qm${uuidv4().replace(/-/g, "").slice(0, 44)}`;
-    }
-
-    const tokenId = nextTokenId++;
-    const credential: StoredCredential = {
-      id: uuidv4(),
-      tokenId,
-      studentAddress: student.walletAddress,
-      studentName: normalizedStudentName,
-      studentEmail: student.email,
-      issuerAddress: issuer.walletAddress,
-      issuerEmail: issuer.email,
-      degreeType: normalizedDegreeType,
-      major: normalizedMajor,
-      institutionName,
-      ipfsHash,
-      issuedAt: new Date().toISOString(),
-      isValid: true,
-    };
-
-    const creds = getCredentials();
-    creds.push(credential);
-    saveCredentials(creds);
 
     return NextResponse.json({
-      tokenId: credential.tokenId,
-      message: "Certificate issued & metadata pinned to IPFS successfully!",
-      ipfsHash: credential.ipfsHash,
-      credential: {
-        id: credential.id,
-        tokenId: credential.tokenId,
-        studentName: credential.studentName,
-        degreeType: credential.degreeType,
-        major: credential.major,
-        issuedAt: credential.issuedAt,
-        ipfsHash: credential.ipfsHash,
-      },
+      message: "Certificate issued and cryptographically signed",
+      tokenId: result.credential.tokenId,
+      warnings: result.warnings,
+      credential: result.credential,
     });
   } catch (error) {
     console.error("Issue error:", error);

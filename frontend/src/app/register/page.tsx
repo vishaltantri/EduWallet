@@ -7,10 +7,12 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { ButtonSpinner } from "@/components/LoadingSpinner";
 
+const MIN_PASSWORD_LENGTH = 8;
+
 function getPasswordStrength(password: string): { score: number; label: string; color: string } {
   let score = 0;
-  if (password.length >= 6) score++;
-  if (password.length >= 10) score++;
+  if (password.length >= MIN_PASSWORD_LENGTH) score++;
+  if (password.length >= 12) score++;
   if (/[A-Z]/.test(password)) score++;
   if (/[0-9]/.test(password)) score++;
   if (/[^A-Za-z0-9]/.test(password)) score++;
@@ -28,6 +30,7 @@ export default function RegisterPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [institutionName, setInstitutionName] = useState("");
   const [role, setRole] = useState<UserRole>("student");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -45,11 +48,27 @@ export default function RegisterPage() {
       return;
     }
 
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+      return;
+    }
+
+    if (role === "university" && !institutionName.trim()) {
+      setError("Institution name is required — it appears on every certificate you issue");
+      return;
+    }
+
     setLoading(true);
 
     try {
-      await register(name, email, password, role);
-      router.push(role === "student" ? "/student/dashboard" : "/university/dashboard");
+      const created = await register({
+        name,
+        email,
+        password,
+        role,
+        institutionName: role === "university" ? institutionName.trim() : undefined,
+      });
+      router.push(created.role === "student" ? "/student/dashboard" : "/university/dashboard");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
@@ -184,16 +203,33 @@ export default function RegisterPage() {
             </div>
 
             <div>
-              <label className="input-label">{role === "university" ? "Institution / Staff Name" : "Full Name"}</label>
+              <label className="input-label">{role === "university" ? "Your Name (Registrar)" : "Full Name"}</label>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="input-field"
-                placeholder={role === "university" ? "MIT Registrar Office" : "Jane Smith"}
+                placeholder={role === "university" ? "Priya Raman" : "Jane Smith"}
                 required
               />
             </div>
+
+            {role === "university" && (
+              <div>
+                <label className="input-label">Institution Name</label>
+                <input
+                  type="text"
+                  value={institutionName}
+                  onChange={(e) => setInstitutionName(e.target.value)}
+                  className="input-field"
+                  placeholder="Indian Institute of Technology, Bombay"
+                  required
+                />
+                <p className="input-hint">
+                  Printed on every certificate you issue and shown to verifiers.
+                </p>
+              </div>
+            )}
 
             <div>
               <label className="input-label">Email Address</label>
@@ -216,8 +252,8 @@ export default function RegisterPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="input-field !pr-10"
-                  placeholder="Min. 6 characters"
-                  minLength={6}
+                  placeholder={`Min. ${MIN_PASSWORD_LENGTH} characters`}
+                  minLength={MIN_PASSWORD_LENGTH}
                   required
                   autoComplete="new-password"
                 />
@@ -279,7 +315,7 @@ export default function RegisterPage() {
                 </div>
               </div>
               <span className="text-xs text-slate-400 leading-relaxed">
-                I understand that a blockchain wallet will be automatically created and encrypted with my password. This is a research prototype.
+                I understand that a blockchain wallet is created and encrypted for me, and that this is a research prototype rather than a production credential registry.
               </span>
             </label>
 

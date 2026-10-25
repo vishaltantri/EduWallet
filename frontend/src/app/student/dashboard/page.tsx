@@ -3,9 +3,11 @@
 import { useAuth } from "@/lib/AuthContext";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useMemo } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
-import { PageLoader } from "@/components/LoadingSpinner";
+import { PageLoader, ButtonSpinner } from "@/components/LoadingSpinner";
+import { StorageWarning } from "@/components/SystemStatus";
+import { useToast } from "@/components/Toast";
 
 interface Credential {
   id: string;
@@ -13,10 +15,40 @@ interface Credential {
   studentName: string;
   degreeType: string;
   major: string;
+  grade?: string;
+  completionDate?: string;
   institutionName: string;
   issuedAt: string;
   isValid: boolean;
   ipfsHash: string;
+  anchored?: boolean;
+  txHash?: string;
+  revokedAt?: string;
+  revocationReason?: string;
+  verificationCount: number;
+  integrity: { signed: boolean; contentIntact: boolean; signatureValid: boolean };
+}
+
+interface VerificationEvent {
+  id: string;
+  verifiedAt: string;
+  outcome: string;
+  origin: string;
+  shareToken?: string;
+}
+
+interface ShareLink {
+  token: string;
+  credentialId: string;
+  label: string;
+  createdAt: string;
+  expiresAt: string | null;
+  anonymized: boolean;
+  revoked: boolean;
+  viewCount: number;
+  lastViewedAt?: string;
+  url: string;
+  active: boolean;
 }
 
 function getGreeting(): string {
@@ -26,14 +58,43 @@ function getGreeting(): string {
   return "Good Evening";
 }
 
+type AuthFetch = (input: string, init?: RequestInit) => Promise<Response>;
+
+async function loadStudentData(
+  authFetch: AuthFetch,
+  walletAddress: string
+): Promise<{ credentials: Credential[]; links: ShareLink[] }> {
+  try {
+    const [credentialsRes, sharesRes] = await Promise.all([
+      authFetch(`/api/credentials/student/${walletAddress}`),
+      authFetch("/api/share"),
+    ]);
+
+    const credentials = credentialsRes.ok ? (await credentialsRes.json()).credentials ?? [] : [];
+    const links = sharesRes.ok ? (await sharesRes.json()).links ?? [] : [];
+    return { credentials, links };
+  } catch (error) {
+    console.error("Failed to load student dashboard:", error);
+    return { credentials: [], links: [] };
+  }
+}
+
 export default function StudentDashboard() {
-  const { user, token, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, authFetch } = useAuth();
   const router = useRouter();
+  const { showToast } = useToast();
+
   const [credentials, setCredentials] = useState<Credential[]>([]);
+  const [shareLinks, setShareLinks] = useState<ShareLink[]>([]);
   const [loading, setLoading] = useState(true);
-  const [copied, setCopied] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "valid" | "revoked">("all");
+
+  const [openLog, setOpenLog] = useState<string | null>(null);
+  const [logs, setLogs] = useState<Record<string, VerificationEvent[]>>({});
+  const [sharing, setSharing] = useState<Credential | null>(null);
+  const [shareForm, setShareForm] = useState({ label: "", expiry: "30d", anonymized: false });
+  const [shareBusy, setShareBusy] = useState(false);
 
   useEffect(() => {
     if (!authLoading && (!user || user.role !== "student")) {
@@ -41,185 +102,141 @@ export default function StudentDashboard() {
     }
   }, [user, authLoading, router]);
 
-  const fetchCredentials = useCallback(async () => {
-    if (!user || !token) return;
-
-    try {
-      const res = await fetch(`/api/credentials/student/${user.walletAddress}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCredentials(data.credentials || []);
-      } else {
-        setCredentials([]);
-      }
-    } catch (err) {
-      console.error("Failed to fetch credentials:", err);
-    } finally {
+  const refresh = useCallback(() => {
+    if (!user) return Promise.resolve();
+    // State lands in the .then callback rather than after an await, so the
+    // React lint rules can see that nothing is set synchronously on mount.
+    return loadStudentData(authFetch, user.walletAddress).then((data) => {
+      setCredentials(data.credentials);
+      setShareLinks(data.links);
       setLoading(false);
-    }
-  }, [token, user]);
+    });
+  }, [authFetch, user]);
 
   useEffect(() => {
-    if (!user || !token) return;
-    const fetchTimer = window.setTimeout(() => void fetchCredentials(), 0);
-    return () => window.clearTimeout(fetchTimer);
-  }, [fetchCredentials, token, user]);
+    void refresh();
+  }, [refresh]);
 
   const filteredCredentials = useMemo(() => {
-    return credentials.filter((cred) => {
+    const query = searchQuery.trim().toLowerCase();
+    return credentials.filter((credential) => {
       const matchesSearch =
-        cred.degreeType.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        cred.major.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        cred.institutionName.toLowerCase().includes(searchQuery.toLowerCase());
+        !query ||
+        credential.degreeType.toLowerCase().includes(query) ||
+        credential.major.toLowerCase().includes(query) ||
+        credential.institutionName.toLowerCase().includes(query);
       const matchesFilter =
         filterStatus === "all" ||
-        (filterStatus === "valid" && cred.isValid) ||
-        (filterStatus === "revoked" && !cred.isValid);
+        (filterStatus === "valid" && credential.isValid) ||
+        (filterStatus === "revoked" && !credential.isValid);
       return matchesSearch && matchesFilter;
     });
   }, [credentials, searchQuery, filterStatus]);
 
-  const copyVerifyLink = (id: string, tokenId: number) => {
-    const link = `${window.location.origin}/verify/${id}`;
-    navigator.clipboard.writeText(link);
-    setCopied(tokenId);
-    setTimeout(() => setCopied(null), 2000);
+  const toggleLog = async (credentialId: string) => {
+    if (openLog === credentialId) {
+      setOpenLog(null);
+      return;
+    }
+    setOpenLog(credentialId);
+    if (logs[credentialId]) return;
+
+    const res = await authFetch(`/api/credentials/${credentialId}/verifications`);
+    if (res.ok) {
+      const data = await res.json();
+      setLogs((current) => ({ ...current, [credentialId]: data.events ?? [] }));
+    }
   };
 
-  if (authLoading || !user) {
-    return <PageLoader label="Loading dashboard..." />;
-  }
+  const copy = async (text: string, message: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(message, "success");
+    } catch {
+      showToast("Could not access the clipboard", "error");
+    }
+  };
+
+  const createShareLink = async () => {
+    if (!sharing) return;
+    setShareBusy(true);
+    try {
+      const res = await authFetch("/api/share", {
+        method: "POST",
+        body: JSON.stringify({ credentialId: sharing.id, ...shareForm }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not create link");
+
+      await copy(data.link.url, "Share link created and copied");
+      setSharing(null);
+      setShareForm({ label: "", expiry: "30d", anonymized: false });
+      await refresh();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Could not create link", "error");
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const revokeShareLink = async (token: string) => {
+    const res = await authFetch(`/api/share/${token}`, { method: "DELETE" });
+    if (res.ok) {
+      showToast("Share link revoked", "success");
+      await refresh();
+    } else {
+      showToast("Could not revoke that link", "error");
+    }
+  };
+
+  if (authLoading || !user) return <PageLoader label="Loading dashboard..." />;
 
   const validCount = credentials.filter((c) => c.isValid).length;
+  const totalVerifications = credentials.reduce((sum, c) => sum + (c.verificationCount ?? 0), 0);
+  const activeLinks = shareLinks.filter((link) => link.active);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Welcome Header */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="mb-8"
-      >
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <StorageWarning />
+
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="mb-7">
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight mb-1">
-              {getGreeting()},{" "}
-              <span className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
-                {user.name}
-              </span>
+              {getGreeting()}, {user.name}
             </h1>
-            <p className="text-slate-400 text-sm">
-              Your decentralized academic credentials dashboard
+            <p className="text-zinc-400 text-sm">
+              Your credentials, who has checked them, and who can still see them
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="badge badge-purple">Student</span>
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-green-500/8 border border-green-500/15">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-              <span className="text-[10px] font-medium text-green-400">Connected</span>
-            </span>
-          </div>
+          <Link href={`/u/${user.walletAddress}`} className="btn-secondary !py-2 !px-4 !text-xs">
+            View public profile
+          </Link>
         </div>
       </motion.div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-        {[
-          {
-            label: "Total Credentials",
-            value: credentials.length,
-            icon: (
-              <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-              </svg>
-            ),
-            gradient: "from-blue-500/10 to-cyan-500/10",
-          },
-          {
-            label: "Active Certificates",
-            value: validCount,
-            icon: (
-              <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-              </svg>
-            ),
-            gradient: "from-emerald-500/10 to-teal-500/10",
-          },
-          {
-            label: "Wallet Address",
-            value: `${user.walletAddress.slice(0, 6)}…${user.walletAddress.slice(-4)}`,
-            icon: (
-              <svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-              </svg>
-            ),
-            gradient: "from-indigo-500/10 to-purple-500/10",
-            mono: true,
-          },
-        ].map((stat, i) => (
-          <motion.div
-            key={stat.label}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.08 }}
-            className="stat-card group"
-          >
-            <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${stat.gradient} rounded-[inherit] opacity-0 group-hover:opacity-100 transition-opacity`} />
-            <div className="relative flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">{stat.label}</p>
-                <p className={`text-xl font-bold mt-1.5 ${stat.mono ? "font-mono text-base" : ""}`}>
-                  {stat.value}
-                </p>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center">
-                {stat.icon}
-              </div>
-            </div>
-          </motion.div>
-        ))}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-7">
+        <Stat label="Credentials" value={credentials.length} />
+        <Stat label="Active" value={validCount} />
+        <Stat label="Times verified" value={totalVerifications} />
+        <Stat label="Active share links" value={activeLinks.length} />
       </div>
 
-      {/* Quick Actions */}
-      <div className="flex flex-wrap gap-2 mb-8">
-        <Link href="/student/recovery" className="btn-secondary !py-2 !px-4 !text-xs">
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-          </svg>
-          Manage Recovery
-        </Link>
-        {credentials.length > 0 && (
-          <Link href={`/verify/${credentials[0]?.id}`} className="btn-secondary !py-2 !px-4 !text-xs">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-            </svg>
-            View on Blockchain
-          </Link>
-        )}
-      </div>
-
-      {/* Credentials Header with Search & Filter */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
+      {/* ─── Credentials ─── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <h2 className="text-xl font-bold">Your Certificates</h2>
         {credentials.length > 0 && (
           <div className="flex gap-2">
-            <div className="relative">
-              <svg className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search credentials..."
-                className="input-field !py-2 !pl-9 !pr-4 !text-xs !w-48"
-              />
-            </div>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search credentials..."
+              className="input-field !py-2 !px-3 !text-xs sm:!w-52"
+            />
             <select
               value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value as "all" | "valid" | "revoked")}
+              onChange={(e) => setFilterStatus(e.target.value as typeof filterStatus)}
               className="input-field !py-2 !px-3 !text-xs !w-auto"
             >
               <option value="all">All Status</option>
@@ -230,7 +247,6 @@ export default function StudentDashboard() {
         )}
       </div>
 
-      {/* Credentials List */}
       {loading ? (
         <div className="grid gap-4">
           {[1, 2].map((i) => (
@@ -238,116 +254,290 @@ export default function StudentDashboard() {
           ))}
         </div>
       ) : credentials.length === 0 ? (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="glass-card-static empty-state"
-        >
-          <div className="empty-state-icon">
-            <svg className="w-16 h-16 text-slate-600 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4.26 10.147a60.436 60.436 0 00-.491 6.347A48.627 48.627 0 0112 20.904a48.627 48.627 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.57 50.57 0 00-2.658-.813A59.905 59.905 0 0112 3.493a59.902 59.902 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0112 13.489a50.702 50.702 0 017.74-3.342" />
-            </svg>
-          </div>
+        <div className="glass-card-static empty-state">
           <h3 className="text-lg font-bold mb-2">No Credentials Yet</h3>
-          <p className="text-slate-400 text-sm max-w-md mx-auto leading-relaxed">
-            Your university will issue your certificates here. Once issued, they&apos;ll appear as
-            tamper-proof soulbound tokens on the Polygon blockchain.
+          <p className="text-zinc-400 text-sm max-w-md mx-auto leading-relaxed">
+            Your institution issues certificates straight to this wallet. Once issued, they appear
+            here as tamper-proof soulbound tokens you can share with anyone.
           </p>
-          <div className="mt-6 flex flex-col gap-2 text-xs text-slate-500">
-            <div className="flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-blue-500/15 flex items-center justify-center text-[10px] font-bold text-blue-400">1</span>
-              Your university registers on EduWallet
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-blue-500/15 flex items-center justify-center text-[10px] font-bold text-blue-400">2</span>
-              They issue your certificate as a soulbound NFT
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-blue-500/15 flex items-center justify-center text-[10px] font-bold text-blue-400">3</span>
-              It appears here — shareable and verifiable
-            </div>
+          <div className="mt-6 flex flex-col gap-2 text-xs text-zinc-500 items-start max-w-xs mx-auto">
+            {[
+              "Your institution registers on EduWallet",
+              "They issue your certificate, signed with their wallet",
+              "It appears here — shareable and instantly verifiable",
+            ].map((step, index) => (
+              <div key={step} className="flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] font-bold text-zinc-300">
+                  {index + 1}
+                </span>
+                {step}
+              </div>
+            ))}
           </div>
-        </motion.div>
+        </div>
       ) : (
         <div className="grid gap-4">
-          {filteredCredentials.map((cred, i) => (
+          {filteredCredentials.map((credential, index) => (
             <motion.div
-              key={cred.tokenId}
-              initial={{ opacity: 0, y: 15 }}
+              key={credential.id}
+              initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.05 }}
+              transition={{ delay: index * 0.04 }}
               className="glass-card p-5 sm:p-6"
             >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-start gap-4">
-                  {/* Certificate icon */}
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                    cred.isValid
-                      ? "bg-gradient-to-br from-emerald-500/15 to-teal-500/15"
-                      : "bg-gradient-to-br from-red-500/15 to-orange-500/15"
-                  }`}>
-                    <svg className={`w-6 h-6 ${cred.isValid ? "text-emerald-400" : "text-red-400"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
-                    </svg>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2.5 mb-1 flex-wrap">
-                      <h3 className="text-base font-bold">{cred.degreeType}</h3>
-                      <span className={`badge ${cred.isValid ? "badge-valid" : "badge-revoked"}`}>
-                        {cred.isValid ? "Active" : "Revoked"}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <h3 className="text-base font-bold">{credential.degreeType}</h3>
+                    <span className={`badge ${credential.isValid ? "badge-valid" : "badge-revoked"}`}>
+                      {credential.isValid ? "Active" : "Revoked"}
+                    </span>
+                    {credential.integrity.signatureValid ? (
+                      <span className="badge badge-info" title="Issuer signature verified">
+                        Signature verified
                       </span>
-                    </div>
-                    <p className="text-sm text-slate-400">{cred.major} — {cred.institutionName}</p>
-                    <div className="flex flex-wrap items-center gap-3 mt-1.5">
-                      <span className="text-xs text-slate-500">
-                        Issued {new Date(cred.issuedAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
-                      </span>
-                      <span className="text-xs text-slate-600">•</span>
-                      <span className="text-xs text-slate-500 font-mono">Token #{cred.tokenId}</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex gap-2 sm:flex-shrink-0">
-                  <button
-                    onClick={() => copyVerifyLink(cred.id, cred.tokenId)}
-                    className="btn-secondary !py-2 !px-3.5 !text-xs"
-                  >
-                    {copied === cred.tokenId ? (
-                      <>
-                        <svg className="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                        </svg>
-                        Copied!
-                      </>
+                    ) : credential.integrity.signed ? (
+                      <span className="badge badge-revoked">Signature mismatch</span>
                     ) : (
-                      <>
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-                        </svg>
-                        Share
-                      </>
+                      <span className="badge badge-pending">Unsigned (legacy)</span>
                     )}
-                  </button>
-                  <Link
-                    href={`/verify/${cred.id}`}
-                    className="btn-primary !py-2 !px-3.5 !text-xs"
+                    {credential.anchored && <span className="badge badge-info">On-chain</span>}
+                  </div>
+                  <p className="text-sm text-zinc-400">
+                    {credential.major} — {credential.institutionName}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-xs text-zinc-500">
+                    <span>
+                      Issued{" "}
+                      {new Date(credential.issuedAt).toLocaleDateString("en-US", {
+                        year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </span>
+                    {credential.grade && <span>· {credential.grade}</span>}
+                    <span className="font-mono">· Token #{credential.tokenId}</span>
+                    <button
+                      onClick={() => void toggleLog(credential.id)}
+                      className="text-zinc-400 hover:text-white underline underline-offset-2"
+                    >
+                      · Verified {credential.verificationCount ?? 0}×
+                    </button>
+                  </div>
+                  {!credential.isValid && credential.revocationReason && (
+                    <p className="text-xs text-red-400/80 mt-2">
+                      Revoked by issuer: {credential.revocationReason}
+                    </p>
+                  )}
+
+                  {openLog === credential.id && (
+                    <div className="mt-3 pt-3 border-t border-zinc-800">
+                      <p className="text-[11px] font-semibold text-zinc-400 mb-2">
+                        Verification history
+                      </p>
+                      {!logs[credential.id] ? (
+                        <p className="text-[11px] text-zinc-500">Loading…</p>
+                      ) : logs[credential.id].length === 0 ? (
+                        <p className="text-[11px] text-zinc-500">
+                          Nobody has opened this credential&apos;s verification link yet.
+                        </p>
+                      ) : (
+                        <ul className="space-y-1 max-h-40 overflow-y-auto">
+                          {logs[credential.id].map((event) => (
+                            <li
+                              key={event.id}
+                              className="flex items-center justify-between gap-3 text-[11px]"
+                            >
+                              <span className="text-zinc-400 truncate">
+                                {event.origin}
+                                {event.shareToken ? " · via share link" : ""}
+                              </span>
+                              <span className="text-zinc-600 flex-shrink-0">
+                                {new Date(event.verifiedAt).toLocaleString("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                })}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-2 lg:flex-shrink-0">
+                  <button
+                    onClick={() => {
+                      setSharing(credential);
+                      setShareForm({
+                        label: `${credential.degreeType} — shared`,
+                        expiry: "30d",
+                        anonymized: false,
+                      });
+                    }}
+                    className="btn-secondary !py-2 !px-3 !text-xs"
                   >
-                    View
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                    </svg>
+                    Share
+                  </button>
+                  <a
+                    href={`/api/credentials/${credential.id}/vc`}
+                    className="btn-secondary !py-2 !px-3 !text-xs"
+                    download
+                  >
+                    Download VC
+                  </a>
+                  <Link href={`/verify/${credential.id}`} className="btn-primary !py-2 !px-3 !text-xs">
+                    View certificate
                   </Link>
                 </div>
               </div>
             </motion.div>
           ))}
-          {filteredCredentials.length === 0 && credentials.length > 0 && (
-            <div className="text-center py-12 text-slate-500 text-sm">
+          {filteredCredentials.length === 0 && (
+            <div className="text-center py-12 text-zinc-500 text-sm">
               No credentials match your search or filter.
             </div>
           )}
         </div>
       )}
+
+      {/* ─── Share links ─── */}
+      {shareLinks.length > 0 && (
+        <div className="mt-10">
+          <h2 className="text-xl font-bold mb-1">Share Links</h2>
+          <p className="text-xs text-zinc-500 mb-4">
+            Scoped links you have handed out. Revoke one and it stops working immediately, even if
+            the recipient bookmarked it.
+          </p>
+          <div className="space-y-2.5">
+            {shareLinks.map((link) => {
+              const credential = credentials.find((item) => item.id === link.credentialId);
+              return (
+                <div key={link.token} className="table-row !items-start flex-col sm:flex-row gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                      <p className="text-sm font-semibold truncate">{link.label}</p>
+                      <span className={`badge ${link.active ? "badge-valid" : "badge-revoked"}`}>
+                        {link.revoked ? "Revoked" : link.active ? "Active" : "Expired"}
+                      </span>
+                      {link.anonymized && <span className="badge badge-info">Name withheld</span>}
+                    </div>
+                    <p className="text-[11px] text-zinc-500 truncate">
+                      {credential ? `${credential.degreeType} · ${credential.major}` : "Credential"} ·{" "}
+                      {link.viewCount} view{link.viewCount === 1 ? "" : "s"} ·{" "}
+                      {link.expiresAt
+                        ? `expires ${new Date(link.expiresAt).toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })}`
+                        : "never expires"}
+                    </p>
+                  </div>
+                  <div className="flex gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => copy(link.url, "Link copied")}
+                      className="btn-secondary !py-1.5 !px-3 !text-[11px]"
+                      disabled={!link.active}
+                    >
+                      Copy
+                    </button>
+                    {!link.revoked && (
+                      <button
+                        onClick={() => revokeShareLink(link.token)}
+                        className="btn-danger !py-1.5 !px-3 !text-[11px]"
+                      >
+                        Revoke
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Share modal */}
+      <AnimatePresence>
+        {sharing && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          >
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setSharing(null)} />
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.96, opacity: 0 }}
+              className="relative glass-card-static p-6 max-w-md w-full"
+            >
+              <h3 className="text-lg font-bold mb-1">Share this credential</h3>
+              <p className="text-xs text-zinc-500 mb-5">
+                {sharing.degreeType} in {sharing.major}. A share link proves the qualification
+                without exposing your permanent credential URL.
+              </p>
+
+              <label className="input-label">Label (only you see this)</label>
+              <input
+                type="text"
+                value={shareForm.label}
+                onChange={(e) => setShareForm({ ...shareForm, label: e.target.value })}
+                className="input-field mb-4"
+                placeholder="Application — Acme Corp"
+              />
+
+              <label className="input-label">Link expires</label>
+              <select
+                value={shareForm.expiry}
+                onChange={(e) => setShareForm({ ...shareForm, expiry: e.target.value })}
+                className="input-field mb-4"
+              >
+                <option value="24h">In 24 hours</option>
+                <option value="7d">In 7 days</option>
+                <option value="30d">In 30 days</option>
+                <option value="never">Never</option>
+              </select>
+
+              <label className="flex items-start gap-3 cursor-pointer mb-5">
+                <input
+                  type="checkbox"
+                  checked={shareForm.anonymized}
+                  onChange={(e) => setShareForm({ ...shareForm, anonymized: e.target.checked })}
+                  className="mt-0.5 accent-white"
+                />
+                <span className="text-xs text-zinc-400 leading-relaxed">
+                  Withhold my name and wallet address. The verifier still sees the degree, the
+                  institution, and a valid issuer signature — useful for anonymous screening.
+                </span>
+              </label>
+
+              <div className="flex gap-3">
+                <button onClick={() => setSharing(null)} className="btn-secondary flex-1 !py-2.5">
+                  Cancel
+                </button>
+                <button onClick={createShareLink} className="btn-primary flex-1 !py-2.5" disabled={shareBusy}>
+                  {shareBusy ? <ButtonSpinner /> : "Create link"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="stat-card">
+      <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">{label}</p>
+      <p className="text-xl font-bold mt-1">{value}</p>
     </div>
   );
 }
