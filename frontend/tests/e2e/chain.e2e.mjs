@@ -361,34 +361,59 @@ await step("execution is still refused during the 24-hour delay", async () => {
 });
 
 await step("after the delay elapses the migration completes on chain and off", async () => {
-  // Move both clocks past the cooldown: the chain's, and the stored request's.
+  // Two clocks have to pass the cooldown: the chain's, and the stored
+  // request's. The chain is wound forward; the server is run with a shortened
+  // cooldown (COOLDOWN_WAIT_MS says how long to wait it out), which is only
+  // honoured outside production.
   await rpc("evm_increaseTime", [25 * 60 * 60]);
   await rpc("evm_mine", []);
+
+  const wait = Number(process.env.COOLDOWN_WAIT_MS || 0);
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
 
   const { status: code, body } = await api(
     `/api/recovery/requests/${recoveryRequestId}/execute`,
     { method: "POST", token: guardianB.token }
   );
 
-  // The off-chain record only becomes executable once its own 24h has passed,
-  // so a freshly opened request is expected to still be in cooldown here
-  // unless the harness pre-aged it. Accept either, but require that a
-  // success really did anchor.
-  if (code === 409) {
-    assert.match(String(body.error), /24-hour/, JSON.stringify(body));
-    results.push("  NOTE  off-chain cooldown not aged; see the aged-request step");
-    return;
-  }
-
-  assert.equal(code, 200, JSON.stringify(body));
+  assert.equal(
+    code,
+    200,
+    `execution did not complete. Run the server with a shortened RECOVERY_COOLDOWN_MS_OVERRIDE and set COOLDOWN_WAIT_MS. Response: ${JSON.stringify(body)}`
+  );
   assert.equal(body.migratedTo.toLowerCase(), destination.toLowerCase());
   assert.match(String(body.request.executeTxHash), /^0x[a-f0-9]{64}$/i, "execution was not anchored");
+
+  const receipt = await rpc("eth_getTransactionReceipt", [body.request.executeTxHash]);
+  assert.equal(receipt.status, "0x1", "executeRecovery reverted on chain");
 
   assert.equal(
     (await recoveryManager.resolveAddress(recoveringStudent.user.walletAddress)).toLowerCase(),
     destination.toLowerCase(),
     "the contract did not record the address migration"
   );
+});
+
+await step("the recovered account keeps working under its new address", async () => {
+  // The holder's own session should now report the new wallet, and the
+  // request should read as executed to both sides.
+  const me = await api("/api/auth/me", { token: recoveringStudent.token });
+  assert.equal(
+    me.body.user.walletAddress.toLowerCase(),
+    destination.toLowerCase(),
+    "the account still reports its old wallet address"
+  );
+
+  const listed = await api("/api/recovery/requests", { token: recoveringStudent.token });
+  const found = listed.body.requests.find((request) => request.id === recoveryRequestId);
+  assert.equal(found.status, "executed");
+
+  // Credentials are looked up under the new address even though they name the
+  // old one, and a second recovery cannot be opened against a settled one.
+  const credentials = await api(`/api/credentials/student/${destination}`, {
+    token: recoveringStudent.token,
+  });
+  assert.equal(credentials.status, 200, JSON.stringify(credentials.body));
 });
 
 // ─── Degradation ────────────────────────────────────────────────────────────

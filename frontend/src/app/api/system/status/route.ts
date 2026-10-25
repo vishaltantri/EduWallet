@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { checkChainHealth } from "@/lib/blockchain";
-import { isDurable, isPersistent, storageMode } from "@/lib/db";
+import { isDurable, isPersistent, storageLocation, storageMode } from "@/lib/db";
 import { checkIPFSHealth } from "@/lib/ipfs";
 
 /**
@@ -18,9 +18,10 @@ export async function GET() {
         mode: storageMode(),
         durable: isPersistent(),
         shared: isDurable(),
+        location: storageLocation(),
         warning: isPersistent()
           ? undefined
-          : "This deployment has no shared database, so accounts and certificates live in one server instance's memory and are lost on restart. Set KV_REST_API_URL and KV_REST_API_TOKEN to make them durable.",
+          : "This deployment has no durable storage, so accounts and certificates live in one instance's memory and are lost whenever it restarts or redeploys. Set KV_REST_API_URL and KV_REST_API_TOKEN for a shared database, or DATA_DIR pointing at a mounted persistent disk.",
       },
       ipfs,
       chain,

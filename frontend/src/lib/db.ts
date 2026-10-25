@@ -25,8 +25,31 @@ export type StorageMode = "kv" | "file" | "memory";
 const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || "";
 const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || "";
 
-const isServerless = process.env.VERCEL === "1";
-const FILE_DIR = isServerless ? path.join("/tmp", "eduwallet") : path.join(process.cwd(), "data");
+/**
+ * An explicit directory for the file backend.
+ *
+ * On a host with a mounted persistent disk (a Render disk, a Docker volume)
+ * this is how you say so: point it at the mount and the file backend becomes
+ * genuinely durable. Without it, a container filesystem is wiped on every
+ * redeploy.
+ */
+const DATA_DIR = process.env.DATA_DIR || "";
+
+/**
+ * Hosts whose filesystem does not survive a restart.
+ *
+ * Vercel was the only one recognised, so on Render the adapter reported
+ * "file" mode and `durable: true` while every redeploy silently erased the
+ * accounts — the opposite of the warning this module exists to give. Render
+ * counts as ephemeral unless DATA_DIR names a mounted disk.
+ */
+const onVercel = process.env.VERCEL === "1";
+const onRender = Boolean(process.env.RENDER);
+const isEphemeralHost = (onVercel || onRender) && !DATA_DIR;
+
+const FILE_DIR =
+  DATA_DIR ||
+  (isEphemeralHost ? path.join("/tmp", "eduwallet") : path.join(process.cwd(), "data"));
 
 const memory = new Map<string, unknown>();
 
@@ -45,7 +68,12 @@ export function isPersistent(): boolean {
 
 export function storageMode(): StorageMode {
   if (isDurable()) return "kv";
-  return isServerless ? "memory" : "file";
+  return isEphemeralHost ? "memory" : "file";
+}
+
+/** Where the file backend writes, for the status report. Never a secret. */
+export function storageLocation(): string {
+  return storageMode() === "kv" ? "shared key-value store" : FILE_DIR;
 }
 
 // ─── Upstash / Vercel KV REST ───────────────────────────────────────────────
