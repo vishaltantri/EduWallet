@@ -32,6 +32,9 @@ EduWallet/
 │   │   └── RecoveryManager.sol         # Social recovery with institutional guardians
 │   ├── test/                           # 48 tests
 │   └── scripts/deploy.js
+├── docs/
+│   ├── USER_GUIDE.md                   # Illustrated end-to-end walkthrough
+│   └── screenshots/                    # Captured from a live, chain-connected instance
 └── frontend/                           # Next.js 16 application
     └── src/
         ├── app/                        # Pages & API routes
@@ -42,20 +45,52 @@ EduWallet/
             ├── credential.ts           # Canonical hashing, signing, W3C VC export
             ├── verification.ts         # Integrity checks and verification outcomes
             ├── issuance.ts             # Issuance pipeline (single + bulk CSV)
-            └── blockchain.ts           # Contract calls with timeouts & degradation
+            ├── blockchain.ts           # Contract calls, relayer, timeouts & degradation
+            ├── recovery.ts             # Social recovery state machine
+            └── recoveryService.ts      # Recovery operations, on-chain and off
 ```
+
+## Documentation
+
+| Document | For |
+|:--|:--|
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | An illustrated, end-to-end walkthrough of every feature, with screenshots |
+| [DEMO_GUIDE.md](DEMO_GUIDE.md) | Operator and presenter reference: running it, the API, environment variables, a demo script |
 
 ## Quick start
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env.local     # fill in what you have; everything is optional
+cp .env.example .env.local     # fill in what you have
 npm run dev
 ```
 
 Then register an institution account, register a student, issue a certificate from
 the institution dashboard, and open the verification link.
+
+Certificates are signed and verifiable with no configuration at all. Two
+variables decide what else works:
+
+- `PLATFORM_PRIVATE_KEY` — without it nothing is anchored on chain. The
+  certificate contract is `onlyIssuer` and institutions get a generated wallet
+  at registration, so this key is what authorises them to mint and funds their
+  gas. Set it to the wallet that deployed the contracts.
+- `KV_REST_API_URL` / `KV_REST_API_TOKEN`, or `DATA_DIR` pointing at a mounted
+  disk — without one of these on a hosted deployment, accounts and certificates
+  are lost on every restart.
+
+`GET /api/system/status` reports the truth about both at any time.
+
+## Tests
+
+```bash
+cd frontend  && npm test           # 179 application tests
+cd contracts && npx hardhat test   # 77 contract tests, with fuzz and invariants
+```
+
+`npm run test:e2e:chain` drives a running instance against a local chain and
+asserts the whole on-chain path, including a complete social recovery.
 
 ## Smart contract commands
 
@@ -86,7 +121,13 @@ npm run contracts:deploy
   lists only active, signature-valid credentials.
 - **Verification audit trail** — how many times each credential was checked, and
   roughly from where.
-- **Social recovery** — M-of-N institutional guardians.
+- **Social recovery** — nominate two to five institutions as guardians and set
+  how many must agree. A guardian opens a request, the others approve, a
+  24-hour delay runs during which only the holder can cancel, and the account
+  then migrates to a new wallet. The old address is remembered, so existing
+  certificates keep verifying against the address they were signed over.
+- **Password change** that re-seals the wallet key, and a one-time wallet key
+  export so the holder can leave with their credentials.
 
 ### For verifiers
 - **No account required.** Paste a link, a credential ID, or a wallet address at

@@ -3,6 +3,10 @@
 Everything in one place: how to run it, what every feature does, and a scripted
 walkthrough for showing it to a supervisor, panel, or viva.
 
+> Looking for a step-by-step walkthrough with screenshots of every screen?
+> See **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)**. This file is the operator's
+> and presenter's reference; that one is the end-user guide.
+
 ---
 
 ## Table of contents
@@ -111,9 +115,9 @@ There are two account types and one unauthenticated audience.
 | `/` | Anyone | Landing page |
 | `/register` | Anyone | Create a student or institution account |
 | `/login` | Anyone | Sign in |
-| `/university/dashboard` | Institution | Issue, bulk-issue, revoke, analytics |
+| `/university/dashboard` | Institution | Six tabs: issue, bulk upload, credentials, analytics, guardianship, account |
 | `/student/dashboard` | Student | Credentials, share links, verification history |
-| `/student/recovery` | Student | Social recovery guardians + wallet key export |
+| `/student/recovery` | Student | Guardians, open recovery requests, wallet key export, password change |
 | `/verify` | **No account** | Verification front door — accepts a link, ID, or address |
 | `/verify/<id>` | **No account** | Full verification result for one credential |
 | `/verify/share/<token>` | **No account** | A scoped, expiring share link |
@@ -571,6 +575,7 @@ Every endpoint returns JSON. Authenticated ones expect `Authorization: Bearer <t
 | `POST` | `/api/auth/login` | Sign in; re-keys legacy wallets transparently |
 | `GET` | `/api/auth/me` | Validate the current session |
 | `POST` | `/api/auth/wallet-export` | Reveal the wallet private key (password required) |
+| `POST` | `/api/auth/password` | Change the password and re-seal the wallet key |
 
 ### Institution only
 
@@ -590,15 +595,55 @@ Every endpoint returns JSON. Authenticated ones expect `Authorization: Bearer <t
 | `GET` | `/api/credentials/:id/verifications` | Verification history (holder or issuer only) |
 | `GET`/`POST` | `/api/share` | List or create share links |
 | `DELETE` | `/api/share/:token` | Revoke a share link |
-| `GET`/`POST` | `/api/recovery/setup` | Read or configure guardians |
+| `GET`/`POST` | `/api/recovery/setup` | Read or configure guardians; registers them on RecoveryManager |
+
+### Social recovery
+
+| Method | Path | Who | Purpose |
+|:--|:--|:--|:--|
+| `GET` | `/api/recovery/requests` | Student or guardian | Requests against your account, or for accounts you guard |
+| `POST` | `/api/recovery/requests` | Guardian | Open a request naming the new wallet address |
+| `POST` | `/api/recovery/requests/:id/approve` | Guardian | Record an approval, mirrored on chain |
+| `POST` | `/api/recovery/requests/:id/execute` | Guardian or holder | Complete the migration once the threshold and the 24-hour delay are both met |
+| `POST` | `/api/recovery/requests/:id/cancel` | Holder only | The veto. A guardian cannot cancel |
 
 ### A one-line verification, from a terminal
 
 Useful to show that the API is not tied to the UI:
 
 ```bash
-curl -s https://YOUR-APP.vercel.app/api/verify/<credential-id> | jq '.outcome, .integrity'
+curl -s https://YOUR-APP.example.com/api/verify/<credential-id> | jq '.outcome, .integrity'
 ```
+
+### Checking a deployment is healthy
+
+```bash
+curl -s https://YOUR-APP.example.com/api/system/status | jq '{storage: .storage.mode, durable: .storage.durable, relayer: .chain.relayer, chain: .chain.reachable, ipfs: .ipfs.reachable}'
+```
+
+All five should be what you expect before you demo anything. `relayer: false`
+means no certificate will be anchored; `durable: false` means the data will not
+survive a restart.
+
+---
+
+## 11. Tests
+
+```bash
+cd frontend && npm test          # 179 application tests
+cd contracts && npx hardhat test # 77 contract tests, including fuzz and invariants
+```
+
+The chain-enabled end-to-end check needs a local node, contracts deployed to
+it, and the app running with `PLATFORM_PRIVATE_KEY` set:
+
+```bash
+cd frontend && npm run test:e2e:chain
+```
+
+It asserts the whole on-chain path: issuer authorisation, minting, the registry
+entry, soulbound enforcement, anchored revocation, and a complete social
+recovery including the migration recorded by the contract.
 
 ---
 
@@ -608,10 +653,14 @@ All are optional; the app degrades and reports rather than failing.
 
 | Variable | Purpose |
 |:--|:--|
-| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | Durable shared storage. **Set these on Vercel.** |
+| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | Durable shared storage. **Set these on any hosted deployment.** |
+| `DATA_DIR` | Alternative to a shared store: the mount path of a persistent disk. Without either, a container filesystem is wiped on every redeploy |
+| `PLATFORM_PRIVATE_KEY` | **Required for on-chain anchoring.** The deploying wallet's key, held server-side. Institutions get a generated wallet at registration and the certificate contract is `onlyIssuer`, so without this nothing can be authorised to mint and every certificate stays signed but unanchored |
+| `ISSUER_GAS_FLOOR`, `ISSUER_GAS_TOPUP` | Gas floor and top-up for institution wallets, in native currency (defaults 0.05 / 0.1) |
 | `JWT_SECRET` | Signs session tokens |
 | `WALLET_MASTER_KEY` | Encrypts the server-held copy of wallet keys. Long-lived — rotating it forces institutions to sign in again before they can issue |
 | `PINATA_JWT`, `PINATA_GATEWAY` | IPFS metadata pinning |
+| `PINATA_API_URL` | Override the pinning API base. Only for a self-hosted compatible service, or tests |
 | `NEXT_PUBLIC_SOULBOUND_ADDRESS` | Soulbound certificate contract |
 | `NEXT_PUBLIC_REGISTRY_ADDRESS` | Credential registry contract |
 | `NEXT_PUBLIC_RECOVERY_ADDRESS` | Recovery manager contract |
@@ -619,3 +668,15 @@ All are optional; the app degrades and reports rather than failing.
 | `NEXT_PUBLIC_EXPLORER_URL` | Block explorer base for transaction links |
 | `NEXT_PUBLIC_APP_URL` | Absolute base URL used in W3C credentials and share links |
 | `CHAIN_TIMEOUT_MS` | How long to wait on an on-chain write before giving up (default 12000) |
+
+### The two that decide what actually works
+
+Everything above is optional in the sense that the app starts without it. Two
+change what the product can do:
+
+- **No `PLATFORM_PRIVATE_KEY`** means no certificate is ever anchored on
+  chain. Certificates are still hashed, signed and verifiable; the network
+  badge reads read-only and the status endpoint says why.
+- **No `KV_REST_API_URL` and no `DATA_DIR`** on a hosted deployment means
+  accounts and certificates are lost on every restart. The app detects this
+  and shows a banner.
