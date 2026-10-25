@@ -16,13 +16,16 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt, RGBColor
 
+from report_images import prepare
 from report_style import (
     BAND_FILL, HEADER_FILL, MAROON,
-    body, bullets, centred, code, configure, page_break, rule, shade, steps,
+    body, bullets, centred, code, configure, no_borders, page_break, rule, shade, steps,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
 SHOTS = ROOT / "docs" / "screenshots"
+SPLIT = SHOTS / "_split"
+TEXT_WIDTH = 6.27  # A4 minus one inch of margin on each side
 OUT = ROOT / "EduWallet_Final_Project_Report.docx"
 
 state = {"figure": 0, "table": 0}
@@ -61,21 +64,48 @@ def add_table(doc, caption, headers, rows, widths=None):
             for i, width in enumerate(widths):
                 row.cells[i].width = Inches(width)
 
-    centred(doc, f"Table {state['table']}: {caption}", size=9.5, after=12).runs[0].italic = True
+    centred(doc, f"Table {state['table']}: {caption}", size=9.5, after=10).runs[0].italic = True
     return table
 
 
-def figure(doc, filename, caption, width=5.6):
+def figure(doc, filename, caption, width=5.1):
+    """
+    Place a screenshot, slicing a tall one into side-by-side columns.
+
+    A full-page capture is far taller than it is wide. Shown whole it either
+    runs off the page or shrinks until it is useless, so tall captures are cut
+    into vertical slices laid out left to right in a borderless table.
+    """
     path = SHOTS / filename
     if not path.exists():
         print(f"  ! missing figure: {filename}")
         return
+
+    parts = prepare(path, SPLIT)
     state["figure"] += 1
-    paragraph = doc.add_paragraph()
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    paragraph.paragraph_format.space_after = Pt(4)
-    paragraph.add_run().add_picture(str(path), width=Inches(width))
-    centred(doc, f"Figure {state['figure']}: {caption}", size=9.5, after=14).runs[0].italic = True
+
+    if len(parts) == 1:
+        paragraph = doc.add_paragraph()
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraph.paragraph_format.space_after = Pt(3)
+        paragraph.add_run().add_picture(str(parts[0]), width=Inches(width))
+    else:
+        gutter = 0.10
+        column = (TEXT_WIDTH - gutter * (len(parts) - 1)) / len(parts)
+        table = doc.add_table(rows=1, cols=len(parts))
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        no_borders(table)
+        for cell, part in zip(table.rows[0].cells, parts):
+            cell.width = Inches(column + gutter)
+            paragraph = cell.paragraphs[0]
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            paragraph.paragraph_format.space_after = Pt(0)
+            paragraph.add_run().add_picture(str(part), width=Inches(column))
+
+    label = "Figure %d: %s" % (state["figure"], caption)
+    if len(parts) > 1:
+        label += " (read left to right)"
+    centred(doc, label, size=9.5, after=10).runs[0].italic = True
 
 
 def h1(doc, text):
@@ -255,23 +285,19 @@ def build():
         doc,
         "Every certificate carries two things that an employer can check for themselves.",
     )
-    add_table(
+    body(
         doc,
-        "The two guarantees on every certificate",
-        ["Guarantee", "What it means", "What it stops"],
-        [
-            [
-                "A fingerprint of the contents",
-                "All the facts on the certificate are combined, in a fixed order, into one short code. Changing anything changes the code.",
-                "Someone editing a grade, a name or a date after the certificate was issued",
-            ],
-            [
-                "A signature from the university",
-                "The university's key signs that code. A checker can work out which key signed it.",
-                "Anyone, including the people running EduWallet, inventing a certificate",
-            ],
-        ],
-        widths=[1.5, 2.6, 2.1],
+        "The first is a fingerprint of the contents. Every fact on the certificate is "
+        "combined, in a fixed order, into one short code. Change the grade, the name or the "
+        "date and the code changes with it, so nobody can edit a certificate after it has "
+        "been issued without the change being obvious.",
+    )
+    body(
+        doc,
+        "The second is a signature from the university. The university's key signs that code, "
+        "and anyone checking can work backwards from the signature to find out which key "
+        "produced it. This is what stops anybody, including the people running EduWallet, "
+        "from inventing a certificate that nobody awarded.",
     )
     body(
         doc,
@@ -280,16 +306,18 @@ def build():
     )
 
     doc.add_heading("3.3 Who uses it", level=2)
-    add_table(
+    body(
         doc,
-        "The three kinds of user",
-        ["User", "Needs an account?", "What they do"],
-        [
-            ["University staff", "Yes", "Issue certificates, singly or a whole year group at once; withdraw mistakes; see who is checking"],
-            ["Student or graduate", "Yes", "Keep certificates, share them with employers, control who sees their name"],
-            ["Employer or verifier", "No", "Check one certificate, once, in under a minute"],
-        ],
-        widths=[1.5, 1.3, 3.4],
+        "University staff sign in to issue certificates, singly or a whole year group at "
+        "once, to withdraw mistakes, and to see who has been checking. Students sign in to "
+        "keep their certificates, share them with employers and control whether their name is "
+        "shown. Employers need no account at all: they check one certificate, once, usually "
+        "in under a minute, and never come back.",
+    )
+    body(
+        doc,
+        "That last group matters most and is the easiest to overlook. They arrive with a link "
+        "from a stranger and have to reach a confident yes or no.",
     )
 
     # ═══════════ 4. Existing solutions ═══════════
@@ -411,16 +439,14 @@ def build():
         "Checking answers three separate questions, and shows each answer on its own rather "
         "than merging them into a single tick.",
     )
-    add_table(
+    body(
         doc,
-        "The three checks and what each one proves",
-        ["Check", "Question it answers", "How it is done"],
-        [
-            ["Signature", "Did this university really issue it?", "The signing key is worked out from the signature and compared with the university's published address"],
-            ["Contents", "Has anything been changed since?", "The fingerprint is recalculated from the stored certificate and compared with the one that was signed"],
-            ["Status", "Has it since been withdrawn?", "The withdrawal record is read, along with the reason given"],
-        ],
-        widths=[1.1, 1.9, 3.2],
+        "The first asks whether the university really issued it, and is answered by working "
+        "out the signing key from the signature and comparing it with the university's "
+        "published address. The second asks whether anything has changed since, and is "
+        "answered by recalculating the fingerprint from the stored certificate and comparing "
+        "it with the one that was signed. The third asks whether it has since been withdrawn, "
+        "and reads the withdrawal record along with the reason given.",
     )
     body(
         doc,
@@ -448,19 +474,16 @@ def build():
         "two and five universities as guardians, and decides how many of them must agree "
         "before the account can be moved.",
     )
-    add_table(
+    steps(
         doc,
-        "The recovery process",
-        ["Step", "Who does it", "What happens"],
         [
-            ["1", "The student, in advance", "Chooses guardians and sets how many must agree"],
-            ["2", "A guardian", "Starts a request naming the student's new address. This counts as the first agreement"],
-            ["3", "Other guardians", "Agree, until the required number is reached"],
-            ["4", "Nobody", "A 24-hour wait begins"],
-            ["5", "The student, if they wish", "Cancels. Only the student can do this"],
-            ["6", "A guardian or the student", "Completes the move, once the agreements and the wait are both satisfied"],
+            "In advance, the student chooses guardians and sets how many must agree.",
+            "A guardian starts a request naming the student's new address. This counts as the first agreement.",
+            "Other guardians agree, until the required number is reached.",
+            "A 24-hour wait begins.",
+            "During that wait the student can cancel. Only the student can.",
+            "After it, a guardian or the student completes the move.",
         ],
-        widths=[0.5, 1.6, 4.1],
     )
     body(
         doc,
@@ -478,17 +501,14 @@ def build():
     )
 
     doc.add_heading("5.5 What is stored where", level=2)
-    add_table(
+    body(
         doc,
-        "Division between the blockchain and the application database",
-        ["On the blockchain", "In the application database"],
-        [
-            ["Who owns which certificate", "Names, email addresses and account details"],
-            ["Which universities may issue", "Searching, filtering and statistics"],
-            ["Whether a certificate is withdrawn", "Share links and their expiry dates"],
-            ["Guardian lists and recovery requests", "The record of who checked what, and when"],
-        ],
-        widths=[3.1, 3.1],
+        "Space on a blockchain is expensive and permanent, so only what needs to be settled "
+        "publicly goes there: who owns which certificate, which universities are allowed to "
+        "issue, whether a certificate has been withdrawn, and the guardian lists and recovery "
+        "requests. Everything else stays in an ordinary database, including names and email "
+        "addresses, searching and statistics, share links and their expiry dates, and the "
+        "record of who checked what.",
     )
     body(
         doc,

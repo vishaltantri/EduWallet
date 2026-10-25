@@ -31,12 +31,12 @@ def configure(doc):
     normal.font.name = BODY_FONT
     normal.font.size = BODY_SIZE
     normal.element.rPr.rFonts.set(qn("w:eastAsia"), BODY_FONT)
-    normal.paragraph_format.space_after = Pt(8)
+    normal.paragraph_format.space_after = Pt(6)
 
     for name, size, colour, before, after in [
-        ("Heading 1", 17, MAROON, 18, 10),
-        ("Heading 2", 14, MAROON, 14, 6),
-        ("Heading 3", 12.5, DEEP, 10, 4),
+        ("Heading 1", 17, MAROON, 14, 8),
+        ("Heading 2", 14, MAROON, 12, 5),
+        ("Heading 3", 12.5, DEEP, 9, 4),
     ]:
         style = doc.styles[name]
         style.font.name = BODY_FONT
@@ -67,7 +67,18 @@ def rule(paragraph, colour=TEAL):
     paragraph._p.get_or_add_pPr().append(borders)
 
 
-def centred(doc, text, size=12, bold=False, after=8, colour=None):
+def no_borders(table):
+    """Strip every border, so a layout table is invisible."""
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        element = OxmlElement(f"w:{edge}")
+        element.set(qn("w:val"), "none")
+        element.set(qn("w:sz"), "0")
+        borders.append(element)
+    table._tbl.tblPr.append(borders)
+
+
+def centred(doc, text, size=12, bold=False, after=6, colour=None):
     paragraph = doc.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph.paragraph_format.space_after = Pt(after)
