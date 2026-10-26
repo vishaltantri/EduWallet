@@ -108,14 +108,41 @@ def steps(doc, items):
         paragraph.paragraph_format.space_after = Pt(4)
 
 
-def code(doc, text):
+def code(doc, text, size=8.5):
+    """
+    A monospaced block.
+
+    Each line is a separate break inside one paragraph; a bare newline in a
+    run is not a line break in Word and would run the whole listing together.
+    """
     paragraph = doc.add_paragraph()
-    paragraph.paragraph_format.left_indent = Inches(0.3)
-    paragraph.paragraph_format.space_after = Pt(10)
-    run = paragraph.add_run(text)
+    fmt = paragraph.paragraph_format
+    fmt.left_indent = Inches(0.22)
+    fmt.space_before = Pt(4)
+    fmt.space_after = Pt(4)
+    fmt.line_spacing = 1.0
+    fmt.keep_together = True
+
+    run = paragraph.add_run()
     run.font.name = "Consolas"
-    run.font.size = Pt(9.5)
+    run.font.size = Pt(size)
+    run.element.rPr.rFonts.set(qn("w:eastAsia"), "Consolas")
+
+    lines = text.split("\n")
+    for index, line in enumerate(lines):
+        if index:
+            run.add_break()
+        run.add_text(line)
+
+    shade_paragraph(paragraph, "F7F3F0")
     return paragraph
+
+
+def shade_paragraph(paragraph, colour):
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:val"), "clear")
+    shading.set(qn("w:fill"), colour)
+    paragraph._p.get_or_add_pPr().append(shading)
 
 
 def page_break(doc):
